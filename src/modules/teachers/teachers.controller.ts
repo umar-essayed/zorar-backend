@@ -3,6 +3,7 @@ import { TeachersService } from './teachers.service';
 import { CreateTeacherDto, CreateTeacherPayoutDto } from './dto/create-teacher.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CurrentTenant } from '../../common/decorators/current-tenant.decorator';
+import { CurrentUser } from '../../common/decorators/current-user.decorator';
 
 @Controller('api/v1/teachers')
 @UseGuards(JwtAuthGuard)
@@ -34,9 +35,20 @@ export class TeachersController {
     return this.teachersService.deleteTeacher(tenantId, id);
   }
 
-  @Post('payouts/calculate')
-  createPayout(@CurrentTenant() tenantId: string, @Body() dto: CreateTeacherPayoutDto) {
-    return this.teachersService.calculateAndCreatePayout(tenantId, dto);
+  @Get(':id/dashboard-stats')
+  getTeacherDashboardStats(
+    @CurrentTenant() tenantId: string,
+    @Param('id') id: string,
+  ) {
+    return this.teachersService.getTeacherDashboardStats(tenantId, id);
+  }
+
+  @Get('portal/stats')
+  getTeacherPortalStats(
+    @CurrentTenant() tenantId: string,
+    @CurrentUser('id') userId: string,
+  ) {
+    return this.teachersService.getTeacherDashboardStats(tenantId, userId);
   }
 }
 

@@ -248,5 +248,211 @@ export class TeachersService {
       data: { isActive: false },
     });
   }
+
+  async getTeacherDashboardStats(tenantId: string, teacherIdOrUserId: string) {
+    let teacher = await this.prisma.teacher.findFirst({
+      where: {
+        tenantId,
+        OR: [
+          { id: teacherIdOrUserId },
+          { userId: teacherIdOrUserId },
+        ],
+      },
+      include: {
+        subject: true,
+        groups: {
+          where: { isActive: true },
+          include: {
+            academicYear: true,
+            subject: true,
+            classroom: true,
+            students: { select: { id: true } },
+          },
+        },
+        courses: {
+          include: {
+            academicYear: true,
+            subject: true,
+            chapters: {
+              include: { lessons: { select: { id: true, title: true } } },
+            },
+            enrollments: { select: { id: true } },
+            exams: { select: { id: true } },
+          },
+        },
+      },
+    });
+
+    if (!teacher) {
+      teacher = await this.prisma.teacher.findFirst({
+        where: { tenantId, isActive: true },
+        include: {
+          subject: true,
+          groups: {
+            where: { isActive: true },
+            include: {
+              academicYear: true,
+              subject: true,
+              classroom: true,
+              students: { select: { id: true } },
+            },
+          },
+          courses: {
+            include: {
+              academicYear: true,
+              subject: true,
+              chapters: {
+                include: { lessons: { select: { id: true, title: true } } },
+              },
+              enrollments: { select: { id: true } },
+              exams: { select: { id: true } },
+            },
+          },
+        },
+      });
+    }
+
+    if (!teacher) {
+      throw new NotFoundException('لا يوجد معلم مسجل لهذا الحساب أو السنتر');
+    }
+
+    const groupIds = teacher.groups.map((g) => g.id);
+    const totalStudentsCount = teacher.groups.reduce((acc, g) => acc + g.students.length, 0);
+
+    const now = new Date();
+    const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+    const endOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
+
+    const [todaySessions, monthAttendances, monthPayouts, recentAssessments] = await Promise.all([
+      this.prisma.groupSession.findMany({
+        where: {
+          groupId: { in: groupIds },
+          isCancelled: false,
+          scheduledDate: { gte: startOfDay, lte: endOfDay },
+        },
+        include: {
+          group: {
+            include: { classroom: true, subject: true },
+          },
+        },
+        orderBy: { startTime: 'asc' },
+      }),
+      this.prisma.attendance.count({
+        where: {
+          groupId: { in: groupIds },
+          scannedAt: {
+            gte: new Date(now.getFullYear(), now.getMonth(), 1),
+            lte: new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999),
+          },
+        },
+      }),
+      this.prisma.teacherPayout.findMany({
+        where: { teacherId: teacher.id },
+        orderBy: { paidAt: 'desc' },
+        take: 5,
+      }),
+      this.prisma.sessionAssessment.findMany({
+        where: {
+          attendance: { groupId: { in: groupIds } },
+        },
+        include: {
+          student: { select: { name: true, studentCode: true } },
+          attendance: { select: { scannedAt: true, sessionNumber: true } },
+        },
+        orderBy: { createdAt: 'desc' },
+        take: 10,
+      }),
+    ]);
+
+    let homeworkDoneCount = 0;
+    let homeworkIncompleteCount = 0;
+    let homeworkNotDoneCount = 0;
+    let quizScoresSum = 0;
+    let quizScoresCount = 0;
+
+    recentAssessments.forEach((ass) => {
+      if (ass.homeworkStatus === 'DONE') homeworkDoneCount++;
+      else if (ass.homeworkStatus === 'INCOMPLETE') homeworkIncompleteCount++;
+      else homeworkNotDoneCount++;
+
+      if (ass.quizScore !== null) {
+        quizScoresSum += Number(ass.quizScore);
+        quizScoresCount++;
+      }
+    });
+
+    const avgQuizScore = quizScoresCount > 0 ? Math.round((quizScoresSum / quizScoresCount) * 10) / 10 : 0;
+    const totalEarnings = monthPayouts.reduce((sum, p) => sum + Number(p.netPaid || 0), 0);
+
+    return {
+      teacher: {
+        id: teacher.id,
+        name: teacher.name,
+        phone: teacher.phone,
+        subjectName: teacher.subject?.name ?? 'عام',
+        bio: teacher.bio,
+        avatarUrl: teacher.avatarUrl,
+        commissionType: teacher.commissionType,
+        centerPercentage: Number(teacher.centerPercentage),
+        fixedCenterFee: Number(teacher.fixedCenterFee),
+      },
+      stats: {
+        totalStudentsCount,
+        totalGroupsCount: teacher.groups.length,
+        totalCoursesCount: teacher.courses.length,
+        monthAttendancesCount: monthAttendances,
+        totalEarnings,
+        avgQuizScore,
+        homeworkStats: {
+          done: homeworkDoneCount,
+          incomplete: homeworkIncompleteCount,
+          notDone: homeworkNotDoneCount,
+        },
+      },
+      todaySessions: todaySessions.map((s) => ({
+        id: s.id,
+        groupId: s.groupId,
+        groupName: s.group.name,
+        sessionNumber: s.sessionNumber,
+        title: s.title,
+        startTime: s.startTime,
+        endTime: s.endTime,
+        classroomName: s.group.classroom?.name ?? 'القاعة الرئيسية',
+        isCompleted: s.isCompleted,
+      })),
+      groups: teacher.groups.map((g) => ({
+        id: g.id,
+        name: g.name,
+        academicYearName: g.academicYear?.name ?? '',
+        studentsCount: g.students.length,
+        pricePerSession: Number(g.pricePerSession),
+        monthlyFee: Number(g.monthlyFee),
+        startTime: g.startTime,
+        endTime: g.endTime,
+      })),
+      courses: teacher.courses.map((c) => ({
+        id: c.id,
+        title: c.title,
+        price: Number(c.price),
+        thumbnailUrl: c.thumbnailUrl,
+        isPublished: c.isPublished,
+        enrolledCount: c.enrollments.length,
+        totalLessons: c.chapters.reduce((sum, ch) => sum + ch.lessons.length, 0),
+        totalQuizzes: c.exams.length,
+      })),
+      recentAssessments: recentAssessments.map((a) => ({
+        id: a.id,
+        studentName: a.student.name,
+        studentCode: a.student.studentCode,
+        homeworkStatus: a.homeworkStatus,
+        quizScore: a.quizScore !== null ? Number(a.quizScore) : null,
+        quizTotal: a.quizTotal !== null ? Number(a.quizTotal) : 10,
+        behaviorNotes: a.behaviorNotes,
+        sessionNumber: a.attendance?.sessionNumber,
+        date: a.createdAt,
+      })),
+    };
+  }
 }
+
 

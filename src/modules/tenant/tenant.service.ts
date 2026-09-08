@@ -300,6 +300,9 @@ export class TenantService {
     const priceStandard = parseFloat(process.env.STUDENT_PRICE_STANDARD_EGP || '2.0');
     const pricePro = parseFloat(process.env.STUDENT_PRICE_PRO_EGP || '5.0');
 
+    const currentSettings = (tenant.settings as Record<string, any>) || {};
+    const transferPhone = currentSettings.rechargeTransferPhone || process.env.RECHARGE_TRANSFER_PHONE || '01553442304';
+
     return {
       currency: 'EGP',
       currentPlan: tenant.plan,
@@ -308,6 +311,12 @@ export class TenantService {
       pricing: {
         standardPerStudentEgp: priceStandard,
         proPerStudentEgp: pricePro,
+      },
+      transferAccount: {
+        phone: transferPhone,
+        methods: ['فودافون كاش (Vodafone Cash)', 'إنستاباي (InstaPay)'],
+        holderName: 'Zorar Code - إدارة السداد المالي والشحن',
+        note: 'يرجى تحويل المبلغ ثم إرفاق صورة/سكرين شوت التحويل لتأكيد الشحن فورياً',
       },
       planFeatures: {
         STANDARD: [
@@ -330,7 +339,7 @@ export class TenantService {
 
   async requestQuotaTopup(
     tenantId: string,
-    dto: { type: 'STANDARD' | 'PRO'; quantity: number; paymentMethod?: string; notes?: string },
+    dto: { type: 'STANDARD' | 'PRO'; quantity: number; paymentMethod?: string; notes?: string; screenshotUrl?: string },
   ) {
     const tenant = await this.prisma.tenant.findUnique({
       where: { id: tenantId },
@@ -358,6 +367,7 @@ export class TenantService {
       totalPriceEgp: totalPrice,
       paymentMethod: dto.paymentMethod || 'INSTAPAY_OR_WALLET',
       notes: dto.notes || '',
+      screenshotUrl: dto.screenshotUrl || null,
       status: 'PENDING',
       createdAt: new Date().toISOString(),
     };

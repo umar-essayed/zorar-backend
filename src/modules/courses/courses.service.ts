@@ -282,48 +282,268 @@ export class CoursesService {
     });
   }
 
-  // إتاحة الكورس لمجموعة طلابية محلية بالسنتر بنقرة واحدة
-  async grantCourseToGroup(tenantId: string, courseId: string, groupId: string) {
+  // إتاحة الكورس لمجموعة أو مجموعات طلابية محلية بالسنتر بنقرة واحدة
+  async grantCourseToGroups(tenantId: string, courseId: string, groupIds: string[]) {
     const course = await this.prisma.course.findFirst({
       where: { id: courseId, tenantId },
     });
     if (!course) throw new NotFoundException('الكورس غير موجود');
 
-    const group = await this.prisma.group.findFirst({
-      where: { id: groupId, tenantId },
+    const groups = await this.prisma.group.findMany({
+      where: { id: { in: groupIds }, tenantId },
       include: { students: true },
     });
-    if (!group) throw new NotFoundException('المجموعة غير موجودة');
+    if (!groups.length) throw new NotFoundException('لم يتم العثور على أي من المجموعات المحددة');
 
-    const studentIds = group.students.map((sg) => sg.studentId);
-    let grantedCount = 0;
+    let totalGrantedCount = 0;
+    const groupNames: string[] = [];
 
-    for (const sId of studentIds) {
-      await this.prisma.studentCourseEnrollment.upsert({
-        where: {
-          studentId_courseId: {
+    for (const group of groups) {
+      groupNames.push(group.name);
+      const studentIds = group.students.map((sg) => sg.studentId);
+      for (const sId of studentIds) {
+        await this.prisma.studentCourseEnrollment.upsert({
+          where: {
+            studentId_courseId: {
+              studentId: sId,
+              courseId,
+            },
+          },
+          update: {
+            source: `GROUP_GRANT_${group.name}`,
+            unlockedAt: new Date(),
+          },
+          create: {
             studentId: sId,
             courseId,
+            source: `GROUP_GRANT_${group.name}`,
+            unlockedAt: new Date(),
           },
-        },
-        update: {
-          source: `GROUP_GRANT_${group.name}`,
-          unlockedAt: new Date(),
-        },
-        create: {
-          studentId: sId,
-          courseId,
-          source: `GROUP_GRANT_${group.name}`,
-          unlockedAt: new Date(),
-        },
-      });
-      grantedCount++;
+        });
+        totalGrantedCount++;
+      }
     }
 
     return {
       success: true,
-      message: `تم فتح محتوى الكورس بنجاح لعدد ${grantedCount} طالب في مجموعة (${group.name})`,
-      grantedCount,
+      message: `تم ربط وفتح محتوى الكورس لعدد ${totalGrantedCount} طالب في المجموعات (${groupNames.join('، ')}) بنجاح`,
+      grantedCount: totalGrantedCount,
+      linkedGroups: groupNames,
+    };
+  }
+
+  async grantCourseToGroup(tenantId: string, courseId: string, groupId: string) {
+    return this.grantCourseToGroups(tenantId, courseId, [groupId]);
+  }
+
+  // تحليلات المنصة المتقدمة (Platform Analytics)
+  async getPlatformAnalytics(tenantId: string, teacherId?: string) {
+    const whereCourse: any = { tenantId };
+    if (teacherId) whereCourse.teacherId = teacherId;
+
+    const [courses, allEnrollmentsCount, watchLogs, exams] = await Promise.all([
+      this.prisma.course.findMany({
+        where: whereCourse,
+        include: {
+          academicYear: { select: { name: true } },
+          subject: { select: { name: true } },
+          teacher: { select: { name: true } },
+          chapters: {
+            include: {
+              lessons: {
+                select: { id: true, title: true, durationSeconds: true },
+              },
+            },
+          },
+          enrollments: {
+            select: { studentId: true, unlockedAt: true },
+          },
+          exams: {
+            include: {
+              submissions: {
+                select: {
+                  id: true,
+                  score: true,
+                  student: { select: { name: true, studentCode: true } },
+                  submittedAt: true,
+                },
+              },
+            },
+          },
+        },
+        orderBy: { createdAt: 'desc' },
+      }),
+      this.prisma.studentCourseEnrollment.count({
+        where: { course: whereCourse },
+      }),
+      this.prisma.videoWatchLog.findMany({
+        where: {
+          lesson: {
+            chapter: {
+              course: whereCourse,
+            },
+          },
+        },
+        select: {
+          studentId: true,
+          lessonId: true,
+          watchedSeconds: true,
+          isCompleted: true,
+          lastWatchedAt: true,
+        },
+      }),
+      this.prisma.exam.findMany({
+        where: {
+          tenantId,
+          ...(teacherId ? { course: { teacherId } } : {}),
+        },
+        include: {
+          course: { select: { title: true } },
+          questions: { select: { id: true } },
+          submissions: {
+            include: {
+              student: { select: { name: true, studentCode: true } },
+            },
+            orderBy: { submittedAt: 'desc' },
+          },
+        },
+        orderBy: { createdAt: 'desc' },
+      }),
+    ]);
+
+    // الإحصائيات العامة
+    const uniqueStudents = new Set<string>();
+    courses.forEach((c) => c.enrollments.forEach((e) => uniqueStudents.add(e.studentId)));
+
+    const activeWatchers = new Set<string>();
+    let totalWatchedSeconds = 0;
+    let completedLessonsCount = 0;
+    watchLogs.forEach((w) => {
+      activeWatchers.add(w.studentId);
+      totalWatchedSeconds += w.watchedSeconds;
+      if (w.isCompleted) completedLessonsCount++;
+    });
+
+    let totalLessonsCount = 0;
+    courses.forEach((c) => {
+      c.chapters.forEach((ch) => {
+        totalLessonsCount += ch.lessons.length;
+      });
+    });
+
+    let totalExamSubmissions = 0;
+    let totalExamScoresSum = 0;
+    let totalPassedSubmissions = 0;
+    exams.forEach((ex) => {
+      const passing = Number(ex.passingScore || 50);
+      ex.submissions.forEach((sub) => {
+        totalExamSubmissions++;
+        totalExamScoresSum += Number(sub.score || 0);
+        if (Number(sub.score || 0) >= passing) totalPassedSubmissions++;
+      });
+    });
+
+    const averageQuizScore = totalExamSubmissions > 0
+      ? Math.round((totalExamScoresSum / totalExamSubmissions) * 10) / 10
+      : 0;
+    const overallPassRate = totalExamSubmissions > 0
+      ? Math.round((totalPassedSubmissions / totalExamSubmissions) * 100)
+      : 0;
+
+    // تفاصيل الكورسات
+    const coursesAnalytics = courses.map((c) => {
+      const courseLessons = c.chapters.flatMap((ch) => ch.lessons);
+      const lessonIds = new Set(courseLessons.map((l) => l.id));
+      const courseWatchLogs = watchLogs.filter((w) => lessonIds.has(w.lessonId));
+      const activeInCourse = new Set(courseWatchLogs.map((w) => w.studentId)).size;
+      const enrolled = c.enrollments.length;
+
+      let courseSubmissions = 0;
+      let courseScoresSum = 0;
+      c.exams.forEach((ex) => {
+        ex.submissions.forEach((s) => {
+          courseSubmissions++;
+          courseScoresSum += Number(s.score || 0);
+        });
+      });
+
+      return {
+        id: c.id,
+        title: c.title,
+        price: Number(c.price),
+        thumbnailUrl: c.thumbnailUrl,
+        academicYearName: c.academicYear?.name ?? '',
+        subjectName: c.subject?.name ?? '',
+        teacherName: c.teacher?.name ?? '',
+        isPublished: c.isPublished,
+        enrolledCount: enrolled,
+        activeStudentsCount: activeInCourse,
+        totalLessons: courseLessons.length,
+        totalQuizzes: c.exams.length,
+        quizSubmissionsCount: courseSubmissions,
+        averageQuizScore: courseSubmissions > 0 ? Math.round((courseScoresSum / courseSubmissions) * 10) / 10 : 0,
+        completionRate: enrolled > 0 && courseLessons.length > 0
+          ? Math.min(100, Math.round((courseWatchLogs.filter((w) => w.isCompleted).length / (enrolled * courseLessons.length)) * 100))
+          : 0,
+      };
+    });
+
+    // تفاصيل الكويزات
+    const quizzesAnalytics = exams.map((ex) => {
+      const subs = ex.submissions;
+      const subCount = subs.length;
+      const passing = Number(ex.passingScore || 50);
+      let highest = 0;
+      let lowest = subCount > 0 ? 100 : 0;
+      let totalScore = 0;
+      let passed = 0;
+
+      subs.forEach((s) => {
+        const sc = Number(s.score || 0);
+        totalScore += sc;
+        if (sc > highest) highest = sc;
+        if (sc < lowest) lowest = sc;
+        if (sc >= passing) passed++;
+      });
+
+      return {
+        id: ex.id,
+        title: ex.title,
+        courseTitle: ex.course?.title ?? 'كورس عام',
+        totalQuestions: ex.questions.length,
+        passingScore: passing,
+        submissionsCount: subCount,
+        averageScore: subCount > 0 ? Math.round((totalScore / subCount) * 10) / 10 : 0,
+        passRate: subCount > 0 ? Math.round((passed / subCount) * 100) : 0,
+        highestScore: highest,
+        lowestScore: subCount > 0 ? lowest : 0,
+        recentSubmissions: subs.slice(0, 10).map((s) => ({
+          studentName: s.student.name,
+          studentCode: s.student.studentCode,
+          score: Number(s.score || 0),
+          isPassed: Number(s.score || 0) >= passing,
+          submittedAt: s.submittedAt,
+        })),
+      };
+    });
+
+    return {
+      overview: {
+        totalCourses: courses.length,
+        totalLessons: totalLessonsCount,
+        totalRegisteredStudents: uniqueStudents.size,
+        totalEnrollments: allEnrollmentsCount,
+        activeWatchersCount: activeWatchers.size,
+        totalWatchHours: Math.round((totalWatchedSeconds / 3600) * 10) / 10,
+        completedLessonsCount,
+        totalQuizzes: exams.length,
+        totalQuizSubmissions: totalExamSubmissions,
+        averageQuizScore,
+        overallPassRate,
+      },
+      courses: coursesAnalytics,
+      quizzes: quizzesAnalytics,
     };
   }
 }
+

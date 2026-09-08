@@ -66,13 +66,32 @@ export class CoursesController {
     return this.coursesService.getCourses(tenantId, { subjectId, academicYearId, teacherId, search });
   }
 
+  @Get('platform/analytics')
+  getPlatformAnalytics(
+    @CurrentTenant() tenantId: string,
+    @Query('teacherId') teacherId?: string,
+  ) {
+    return this.coursesService.getPlatformAnalytics(tenantId, teacherId);
+  }
+
   @Post(':courseId/grant-group')
   grantCourseToGroup(
     @CurrentTenant() tenantId: string,
     @Param('courseId') courseId: string,
-    @Body('groupId') groupId: string,
+    @Body('groupId') groupId?: string,
+    @Body('groupIds') groupIds?: string[],
   ) {
-    return this.coursesService.grantCourseToGroup(tenantId, courseId, groupId);
+    const targetIds = groupIds && groupIds.length ? groupIds : (groupId ? [groupId] : []);
+    return this.coursesService.grantCourseToGroups(tenantId, courseId, targetIds);
+  }
+
+  @Post(':courseId/grant-groups')
+  grantCourseToGroups(
+    @CurrentTenant() tenantId: string,
+    @Param('courseId') courseId: string,
+    @Body('groupIds') groupIds: string[],
+  ) {
+    return this.coursesService.grantCourseToGroups(tenantId, courseId, groupIds || []);
   }
 
   // نقطة جلب توكن الفيديو المشفر والعلامة المائية للطالب
