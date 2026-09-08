@@ -51,7 +51,8 @@ export class AttendanceController {
     @CurrentTenant() tenantId: string,
     @Param('groupId') groupId: string,
     @Query('date') date?: string,
+    @Query('sessionId') sessionId?: string,
   ) {
-    return this.attendanceService.getGroupAttendance(tenantId, groupId, date);
+    return this.attendanceService.getGroupAttendance(tenantId, groupId, date, sessionId);
   }
 }

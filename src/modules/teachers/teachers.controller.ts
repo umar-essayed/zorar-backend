@@ -35,6 +35,23 @@ export class TeachersController {
     return this.teachersService.deleteTeacher(tenantId, id);
   }
 
+  @Post(':id/reset-password')
+  resetTeacherPassword(
+    @CurrentTenant() tenantId: string,
+    @Param('id') id: string,
+    @Body('password') password: string,
+  ) {
+    return this.teachersService.resetTeacherPassword(tenantId, id, password);
+  }
+
+  @Post('payouts')
+  createPayout(
+    @CurrentTenant() tenantId: string,
+    @Body() dto: CreateTeacherPayoutDto,
+  ) {
+    return this.teachersService.calculateAndCreatePayout(tenantId, dto);
+  }
+
   @Get(':id/dashboard-stats')
   getTeacherDashboardStats(
     @CurrentTenant() tenantId: string,

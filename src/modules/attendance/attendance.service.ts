@@ -542,7 +542,7 @@ export class AttendanceService {
     return results;
   }
 
-  async getGroupAttendance(tenantId: string, groupId: string, dateStr?: string) {
+  async getGroupAttendance(tenantId: string, groupId: string, dateStr?: string, sessionId?: string) {
     const targetDate = dateStr ? new Date(dateStr) : new Date();
     const startOfDay = new Date(targetDate);
     startOfDay.setHours(0, 0, 0, 0);
@@ -553,12 +553,19 @@ export class AttendanceService {
     const startOfMonth = new Date(targetDate.getFullYear(), targetDate.getMonth(), 1);
     const endOfMonth = new Date(targetDate.getFullYear(), targetDate.getMonth() + 1, 0, 23, 59, 59, 999);
 
+    const whereClause: any = {
+      tenantId,
+      groupId,
+    };
+
+    if (sessionId && sessionId.trim() !== '') {
+      whereClause.sessionId = sessionId.trim();
+    } else {
+      whereClause.scannedAt = { gte: startOfDay, lte: endOfDay };
+    }
+
     const attendances = await this.prisma.attendance.findMany({
-      where: {
-        tenantId,
-        groupId,
-        scannedAt: { gte: startOfDay, lte: endOfDay },
-      },
+      where: whereClause,
       include: {
         student: {
           include: {

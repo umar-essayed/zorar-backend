@@ -130,7 +130,16 @@ export class TeachersService {
           select: {
             id: true,
             name: true,
+            academicYear: {
+              select: { id: true, name: true },
+            },
             _count: { select: { students: true, attendances: true } },
+          },
+        },
+        payouts: {
+          select: {
+            id: true,
+            netPaid: true,
           },
         },
       },
@@ -143,10 +152,50 @@ export class TeachersService {
       where: { id, tenantId },
       include: {
         subject: true,
-        groups: true,
+        user: {
+          select: {
+            id: true,
+            phone: true,
+            role: true,
+            isActive: true,
+          },
+        },
+        groups: {
+          where: { isActive: true },
+          include: {
+            academicYear: true,
+            classroom: true,
+            students: {
+              include: {
+                student: {
+                  select: {
+                    id: true,
+                    name: true,
+                    studentCode: true,
+                    phone: true,
+                    guardianPhone: true,
+                  },
+                },
+              },
+            },
+            _count: { select: { attendances: true, sessions: true } },
+          },
+        },
         books: true,
-        courses: true,
-        payouts: { orderBy: { paidAt: 'desc' }, take: 10 },
+        courses: {
+          include: {
+            academicYear: true,
+            chapters: {
+              select: {
+                id: true,
+                lessons: { select: { id: true, title: true } },
+              },
+            },
+            enrollments: { select: { id: true } },
+            exams: { select: { id: true } },
+          },
+        },
+        payouts: { orderBy: { paidAt: 'desc' }, take: 20 },
       },
     });
     if (!teacher) throw new NotFoundException('المدرس غير موجود');
@@ -222,8 +271,74 @@ export class TeachersService {
   }
 
   async updateTeacher(tenantId: string, id: string, dto: any) {
-    const teacher = await this.prisma.teacher.findFirst({ where: { id, tenantId } });
+    const teacher = await this.prisma.teacher.findFirst({
+      where: { id, tenantId },
+      include: { user: true },
+    });
     if (!teacher) throw new NotFoundException('المدرس غير موجود');
+
+    let userId = teacher.userId;
+
+    if (dto.password && dto.password.trim() !== '') {
+      const passwordHash = await bcrypt.hash(dto.password.trim(), 10);
+      if (teacher.userId) {
+        await this.prisma.user.update({
+          where: { id: teacher.userId },
+          data: {
+            passwordHash,
+            ...(dto.phone ? { phone: dto.phone } : {}),
+            ...(dto.name ? { name: dto.name } : {}),
+          },
+        });
+      } else {
+        const phone = dto.phone || teacher.phone;
+        const existingUser = await this.prisma.user.findFirst({
+          where: { phone, tenantId },
+        });
+        if (existingUser) {
+          const updated = await this.prisma.user.update({
+            where: { id: existingUser.id },
+            data: {
+              passwordHash,
+              role: 'TEACHER',
+              name: dto.name || teacher.name,
+            },
+          });
+          userId = updated.id;
+        } else {
+          const newUser = await this.prisma.user.create({
+            data: {
+              tenantId,
+              name: dto.name || teacher.name,
+              phone,
+              passwordHash,
+              role: 'TEACHER',
+            },
+          });
+          userId = newUser.id;
+        }
+      }
+    } else if (dto.phone && teacher.userId) {
+      await this.prisma.user.update({
+        where: { id: teacher.userId },
+        data: {
+          phone: dto.phone,
+          ...(dto.name ? { name: dto.name } : {}),
+        },
+      });
+    }
+
+    let centerPercentage = dto.centerPercentage !== undefined ? dto.centerPercentage : undefined;
+    let fixedCenterFee = dto.fixedCenterFee !== undefined ? dto.fixedCenterFee : undefined;
+
+    if (dto.commissionValue !== undefined && dto.commissionValue !== null) {
+      if (dto.commissionType === 'FIXED_PER_STUDENT') {
+        fixedCenterFee = dto.commissionValue;
+      } else {
+        centerPercentage = dto.commissionValue > 50 ? (100 - dto.commissionValue) : dto.commissionValue;
+      }
+    }
+
     return this.prisma.teacher.update({
       where: { id },
       data: {
@@ -231,13 +346,74 @@ export class TeachersService {
         ...(dto.phone ? { phone: dto.phone } : {}),
         ...(dto.subjectId ? { subjectId: dto.subjectId } : {}),
         ...(dto.commissionType ? { commissionType: dto.commissionType } : {}),
-        ...(dto.centerPercentage !== undefined ? { centerPercentage: dto.centerPercentage } : {}),
-        ...(dto.fixedCenterFee !== undefined ? { fixedCenterFee: dto.fixedCenterFee } : {}),
+        ...(centerPercentage !== undefined ? { centerPercentage } : {}),
+        ...(fixedCenterFee !== undefined ? { fixedCenterFee } : {}),
         ...(dto.bio !== undefined ? { bio: dto.bio } : {}),
         ...(dto.avatarUrl !== undefined ? { avatarUrl: dto.avatarUrl } : {}),
+        ...(userId ? { userId } : {}),
       },
-      include: { subject: true },
+      include: {
+        subject: true,
+        user: {
+          select: {
+            id: true,
+            phone: true,
+            role: true,
+            isActive: true,
+          },
+        },
+      },
     });
+  }
+
+  async resetTeacherPassword(tenantId: string, id: string, newPassword: string) {
+    const teacher = await this.prisma.teacher.findFirst({
+      where: { id, tenantId },
+      include: { user: true },
+    });
+    if (!teacher) throw new NotFoundException('المدرس غير موجود');
+
+    if (!newPassword || newPassword.trim().length < 4) {
+      throw new BadRequestException('كلمة المرور يجب أن لا تقل عن 4 خانات');
+    }
+
+    const passwordHash = await bcrypt.hash(newPassword.trim(), 10);
+    if (teacher.userId) {
+      await this.prisma.user.update({
+        where: { id: teacher.userId },
+        data: { passwordHash },
+      });
+      return { success: true, message: 'تم تحديث كلمة مرور حساب المعلم بنجاح' };
+    } else {
+      const existingUser = await this.prisma.user.findFirst({
+        where: { phone: teacher.phone, tenantId },
+      });
+      if (existingUser) {
+        await this.prisma.user.update({
+          where: { id: existingUser.id },
+          data: { passwordHash, role: 'TEACHER' },
+        });
+        await this.prisma.teacher.update({
+          where: { id: teacher.id },
+          data: { userId: existingUser.id },
+        });
+      } else {
+        const newUser = await this.prisma.user.create({
+          data: {
+            tenantId,
+            name: teacher.name,
+            phone: teacher.phone,
+            passwordHash,
+            role: 'TEACHER',
+          },
+        });
+        await this.prisma.teacher.update({
+          where: { id: teacher.id },
+          data: { userId: newUser.id },
+        });
+      }
+      return { success: true, message: 'تم إنشاء حساب دخول وتعيين كلمة المرور للمعلم بنجاح' };
+    }
   }
 
   async deleteTeacher(tenantId: string, id: string) {

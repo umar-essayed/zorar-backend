@@ -527,22 +527,30 @@ export class CoursesService {
       };
     });
 
+    const summaryData = {
+      totalCourses: courses.length,
+      totalLessons: totalLessonsCount,
+      totalRegisteredStudents: uniqueStudents.size,
+      uniqueStudents: uniqueStudents.size,
+      totalEnrollments: allEnrollmentsCount,
+      activeWatchersCount: activeWatchers.size,
+      activeWatchers: activeWatchers.size,
+      totalWatchHours: Math.round((totalWatchedSeconds / 3600) * 10) / 10,
+      completedLessonsCount,
+      totalQuizzes: exams.length,
+      totalQuizSubmissions: totalExamSubmissions,
+      averageQuizScore,
+      quizPassRate: overallPassRate,
+      overallPassRate,
+    };
+
     return {
-      overview: {
-        totalCourses: courses.length,
-        totalLessons: totalLessonsCount,
-        totalRegisteredStudents: uniqueStudents.size,
-        totalEnrollments: allEnrollmentsCount,
-        activeWatchersCount: activeWatchers.size,
-        totalWatchHours: Math.round((totalWatchedSeconds / 3600) * 10) / 10,
-        completedLessonsCount,
-        totalQuizzes: exams.length,
-        totalQuizSubmissions: totalExamSubmissions,
-        averageQuizScore,
-        overallPassRate,
-      },
+      overview: summaryData,
+      summary: summaryData,
       courses: coursesAnalytics,
+      coursesAnalytics: coursesAnalytics,
       quizzes: quizzesAnalytics,
+      quizzesAnalytics: quizzesAnalytics,
     };
   }
 }
