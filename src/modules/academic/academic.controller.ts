@@ -20,6 +20,11 @@ export class AcademicController {
     return this.academicService.getYears(tenantId);
   }
 
+  @Post('sync-stages')
+  syncStages(@CurrentTenant() tenantId: string, @Body('stages') stages: string[]) {
+    return this.academicService.syncStages(tenantId, stages || []);
+  }
+
   // المواد
   @Post('subjects')
   createSubject(@CurrentTenant() tenantId: string, @Body() dto: CreateSubjectDto) {

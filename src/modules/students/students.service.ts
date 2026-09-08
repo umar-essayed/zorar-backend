@@ -354,9 +354,19 @@ export class StudentsService {
         attendances: {
           include: {
             group: { select: { id: true, name: true } },
+            assessment: true,
           },
           orderBy: { scannedAt: 'desc' },
           take: 30,
+        },
+        assessments: {
+          include: {
+            attendance: {
+              include: { group: { select: { id: true, name: true } } },
+            },
+          },
+          orderBy: { createdAt: 'desc' },
+          take: 20,
         },
         videoWatchLogs: {
           include: {

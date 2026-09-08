@@ -553,5 +553,79 @@ export class AcademicService {
     if (!sub) throw new NotFoundException('المادة الدراسية غير موجودة');
     return this.prisma.subject.delete({ where: { id } });
   }
+
+  // مزامنة وتوليد المراحل والصفوف الدراسية تلقائياً بما فيها البكالوريا
+  async syncStages(tenantId: string, stages: string[]) {
+    const stageDefinitions: Record<string, { name: string; orderIndex: number }[]> = {
+      PRIMARY: [
+        { name: 'الصف الأول الابتدائي', orderIndex: 10 },
+        { name: 'الصف الثاني الابتدائي', orderIndex: 20 },
+        { name: 'الصف الثالث الابتدائي', orderIndex: 30 },
+        { name: 'الصف الرابع الابتدائي', orderIndex: 40 },
+        { name: 'الصف الخامس الابتدائي', orderIndex: 50 },
+        { name: 'الصف السادس الابتدائي', orderIndex: 60 },
+      ],
+      PREPARATORY: [
+        { name: 'الصف الأول الإعدادي', orderIndex: 100 },
+        { name: 'الصف الثاني الإعدادي', orderIndex: 110 },
+        { name: 'الصف الثالث الإعدادي', orderIndex: 120 },
+      ],
+      SECONDARY: [
+        { name: 'الصف الأول الثانوي', orderIndex: 200 },
+        { name: 'الصف الثاني الثانوي', orderIndex: 210 },
+        { name: 'الصف الثالث الثانوي', orderIndex: 220 },
+      ],
+      BACCALAUREATE: [
+        { name: 'أولى بكالوريا (1ère Bac)', orderIndex: 300 },
+        { name: 'ثانية بكالوريا (2ème Bac)', orderIndex: 310 },
+        { name: 'ثالثة بكالوريا - عامة (Terminale)', orderIndex: 320 },
+      ],
+    };
+
+    const existingYears = await this.prisma.academicYear.findMany({
+      where: { tenantId },
+    });
+    const existingNames = new Set(existingYears.map((y) => y.name.trim()));
+
+    const yearsToCreate: { name: string; orderIndex: number }[] = [];
+    for (const stage of stages) {
+      const defs = stageDefinitions[stage.toUpperCase()];
+      if (defs) {
+        for (const yearDef of defs) {
+          if (!existingNames.has(yearDef.name)) {
+            yearsToCreate.push(yearDef);
+            existingNames.add(yearDef.name);
+          }
+        }
+      }
+    }
+
+    for (const y of yearsToCreate) {
+      await this.prisma.academicYear.create({
+        data: {
+          tenantId,
+          name: y.name,
+          orderIndex: y.orderIndex,
+        },
+      });
+    }
+
+    const tenant = await this.prisma.tenant.findUnique({
+      where: { id: tenantId },
+      select: { settings: true },
+    });
+    const currentSettings = (tenant?.settings as Record<string, any>) || {};
+    await this.prisma.tenant.update({
+      where: { id: tenantId },
+      data: {
+        settings: {
+          ...currentSettings,
+          selectedStages: stages,
+        },
+      },
+    });
+
+    return this.getYears(tenantId);
+  }
 }
 

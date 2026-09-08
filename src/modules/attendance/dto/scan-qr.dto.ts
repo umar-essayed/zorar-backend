@@ -56,8 +56,16 @@ export class BatchOfflineSyncDto {
 
 export class RecordSessionAssessmentDto {
   @IsString()
-  @IsNotEmpty({ message: 'معرف الحضور مطلوب' })
-  attendanceId: string;
+  @IsOptional()
+  attendanceId?: string;
+
+  @IsString()
+  @IsOptional()
+  studentId?: string;
+
+  @IsString()
+  @IsOptional()
+  groupId?: string;
 
   @IsEnum(HomeworkStatus)
   homeworkStatus: HomeworkStatus;

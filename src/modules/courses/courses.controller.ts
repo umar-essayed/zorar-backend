@@ -30,6 +30,15 @@ export class CoursesController {
     return this.coursesService.getCourses(tenantId);
   }
 
+  @Post(':courseId/grant-group')
+  grantCourseToGroup(
+    @CurrentTenant() tenantId: string,
+    @Param('courseId') courseId: string,
+    @Body('groupId') groupId: string,
+  ) {
+    return this.coursesService.grantCourseToGroup(tenantId, courseId, groupId);
+  }
+
   // نقطة جلب توكن الفيديو المشفر والعلامة المائية للطالب
   @Get('lessons/:lessonId/secure-play')
   getSecurePlayback(

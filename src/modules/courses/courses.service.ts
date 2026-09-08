@@ -179,4 +179,49 @@ export class CoursesService {
       },
     });
   }
+
+  // إتاحة الكورس لمجموعة طلابية محلية بالسنتر بنقرة واحدة
+  async grantCourseToGroup(tenantId: string, courseId: string, groupId: string) {
+    const course = await this.prisma.course.findFirst({
+      where: { id: courseId, tenantId },
+    });
+    if (!course) throw new NotFoundException('الكورس غير موجود');
+
+    const group = await this.prisma.group.findFirst({
+      where: { id: groupId, tenantId },
+      include: { students: true },
+    });
+    if (!group) throw new NotFoundException('المجموعة غير موجودة');
+
+    const studentIds = group.students.map((sg) => sg.studentId);
+    let grantedCount = 0;
+
+    for (const sId of studentIds) {
+      await this.prisma.studentCourseEnrollment.upsert({
+        where: {
+          studentId_courseId: {
+            studentId: sId,
+            courseId,
+          },
+        },
+        update: {
+          source: `GROUP_GRANT_${group.name}`,
+          unlockedAt: new Date(),
+        },
+        create: {
+          studentId: sId,
+          courseId,
+          source: `GROUP_GRANT_${group.name}`,
+          unlockedAt: new Date(),
+        },
+      });
+      grantedCount++;
+    }
+
+    return {
+      success: true,
+      message: `تم فتح محتوى الكورس بنجاح لعدد ${grantedCount} طالب في مجموعة (${group.name})`,
+      grantedCount,
+    };
+  }
 }

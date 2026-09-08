@@ -355,16 +355,59 @@ export class AttendanceService {
 
   // تسجيل تقييم الحصة (واجب + كويز تسميع + سلوك)
   async recordAssessment(tenantId: string, assistantId: string, dto: RecordSessionAssessmentDto) {
-    const attendance = await this.prisma.attendance.findFirst({
-      where: { id: dto.attendanceId, tenantId },
-      include: { student: true, group: true },
-    });
-    if (!attendance) throw new NotFoundException('سجل الحضور غير موجود');
+    let attendance = null;
+    if (dto.attendanceId) {
+      attendance = await this.prisma.attendance.findFirst({
+        where: { id: dto.attendanceId, tenantId },
+        include: { student: true, group: true },
+      });
+    } else if (dto.studentId) {
+      const now = new Date();
+      const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+      const endOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
+
+      attendance = await this.prisma.attendance.findFirst({
+        where: {
+          tenantId,
+          studentId: dto.studentId,
+          ...(dto.groupId ? { groupId: dto.groupId } : {}),
+          scannedAt: { gte: startOfDay, lte: endOfDay },
+        },
+        include: { student: true, group: true },
+      });
+
+      if (!attendance) {
+        const validAssistantId = await this.resolveValidUserId(assistantId);
+        let targetGroupId = dto.groupId;
+        if (!targetGroupId) {
+          const studentGrp = await this.prisma.studentGroup.findFirst({
+            where: { studentId: dto.studentId, group: { tenantId } },
+          });
+          targetGroupId = studentGrp?.groupId;
+        }
+
+        if (targetGroupId) {
+          attendance = await this.prisma.attendance.create({
+            data: {
+              tenantId,
+              studentId: dto.studentId,
+              groupId: targetGroupId,
+              status: AttendanceStatus.PRESENT,
+              scannedById: validAssistantId,
+              scannedAt: new Date(),
+            },
+            include: { student: true, group: true },
+          });
+        }
+      }
+    }
+
+    if (!attendance) throw new NotFoundException('تعذر العثور على أو إنشاء سجل الحضور للطالب');
 
     const validRecordedById = await this.resolveValidUserId(assistantId);
 
     const assessment = await this.prisma.sessionAssessment.upsert({
-      where: { attendanceId: dto.attendanceId },
+      where: { attendanceId: attendance.id },
       update: {
         homeworkStatus: dto.homeworkStatus,
         quizScore: dto.quizScore,
@@ -374,7 +417,7 @@ export class AttendanceService {
       },
       create: {
         tenantId,
-        attendanceId: dto.attendanceId,
+        attendanceId: attendance.id,
         studentId: attendance.studentId,
         recordedById: validRecordedById,
         homeworkStatus: dto.homeworkStatus,
