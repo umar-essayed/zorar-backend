@@ -27,6 +27,14 @@ jobs:
 
       - name: Generate Prisma Client & Build
         run: npm run build
+        env:
+          DATABASE_URL: "postgresql://postgres:dummy@localhost:5432/postgres"
+          DIRECT_URL: "postgresql://postgres:dummy@localhost:5432/postgres"
 
       - name: Run Serverless Handler Tests
         run: npx ts-node test-serverless.ts
+        env:
+          DATABASE_URL: "postgresql://postgres:dummy@localhost:5432/postgres"
+          DIRECT_URL: "postgresql://postgres:dummy@localhost:5432/postgres"
+          JWT_SECRET: "ci-secret-key-2026"
+          NODE_ENV: "test"

@@ -1,3 +1,8 @@
+process.env.DATABASE_URL = process.env.DATABASE_URL || 'postgresql://postgres:dummy@localhost:5432/postgres';
+process.env.DIRECT_URL = process.env.DIRECT_URL || 'postgresql://postgres:dummy@localhost:5432/postgres';
+process.env.JWT_SECRET = process.env.JWT_SECRET || 'test-jwt-secret-2026';
+process.env.NODE_ENV = 'test';
+
 import * as http from 'http';
 import handler, { createServerlessServer } from './api/index';
 
