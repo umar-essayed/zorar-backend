@@ -8,6 +8,11 @@ import { ValidationPipe, INestApplication } from '@nestjs/common';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import { AppModule } from './app.module';
 
+import { ExpressAdapter } from '@nestjs/platform-express';
+import * as express from 'express';
+
+let cachedServer: any = null;
+
 export function setupApp(app: INestApplication) {
   // تمكين CORS لجميع تطبيقات الويب والموبايل
   app.enableCors({
@@ -37,6 +42,25 @@ export function setupApp(app: INestApplication) {
   SwaggerModule.setup('docs', app, document);
 }
 
+export async function createServer(): Promise<any> {
+  if (!cachedServer) {
+    const expressApp = (express as any).default ? (express as any).default() : (express as any)();
+    const adapter = new ExpressAdapter(expressApp);
+    const app = await NestFactory.create(AppModule, adapter);
+    setupApp(app);
+    await app.init();
+    cachedServer = expressApp;
+  }
+  return cachedServer;
+}
+
+// Vercel Serverless Function Default Export
+export default async function handler(req: any, res: any) {
+  const server = await createServer();
+  return server(req, res);
+}
+
+// Traditional server bootstrap for local development / Docker
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
   setupApp(app);
@@ -47,8 +71,9 @@ async function bootstrap() {
   console.log(`📚 Swagger API Documentation is available on: http://localhost:${port}/docs`);
 }
 
-if (require.main === module) {
+if (!process.env.VERCEL && require.main === module) {
   bootstrap();
 }
 
 export { bootstrap };
+
