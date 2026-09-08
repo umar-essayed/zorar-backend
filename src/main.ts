@@ -1,3 +1,4 @@
+import './env-bootstrap';
 import * as dns from 'dns';
 try {
   dns.setDefaultResultOrder('ipv4first');
