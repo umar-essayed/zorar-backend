@@ -576,9 +576,9 @@ export class AcademicService {
         { name: 'الصف الثالث الثانوي', orderIndex: 220 },
       ],
       BACCALAUREATE: [
-        { name: 'أولى بكالوريا (1ère Bac)', orderIndex: 300 },
-        { name: 'ثانية بكالوريا (2ème Bac)', orderIndex: 310 },
-        { name: 'ثالثة بكالوريا - عامة (Terminale)', orderIndex: 320 },
+        { name: 'أولى بكالوريا', orderIndex: 300 },
+        { name: 'ثانية بكالوريا', orderIndex: 310 },
+        { name: 'ثالثة بكالوريا', orderIndex: 320 },
       ],
     };
 
@@ -626,6 +626,53 @@ export class AcademicService {
     });
 
     return this.getYears(tenantId);
+  }
+
+  async openEmergencySession(
+    tenantId: string,
+    groupId: string,
+    dto: {
+      sessionNumber?: number;
+      title?: string;
+      reason?: string;
+      date?: string;
+    },
+  ) {
+    const group = await this.prisma.group.findFirst({ where: { id: groupId, tenantId } });
+    if (!group) throw new NotFoundException('المجموعة غير موجودة');
+
+    const sessionNum = dto.sessionNumber || 1;
+    const now = dto.date ? new Date(dto.date) : new Date();
+
+    const existing = await this.prisma.groupSession.findFirst({
+      where: { groupId, sessionNumber: sessionNum },
+    });
+
+    if (existing) {
+      return this.prisma.groupSession.update({
+        where: { id: existing.id },
+        data: {
+          actualDate: now,
+          title: dto.title || `جلسة استثنائية (حصة ${sessionNum})`,
+          notes: dto.reason || 'جلسة حضور استثنائية',
+          isCancelled: false,
+        },
+      });
+    }
+
+    return this.prisma.groupSession.create({
+      data: {
+        tenantId,
+        groupId,
+        sessionNumber: sessionNum,
+        title: dto.title || `جلسة استثنائية (حصة ${sessionNum})`,
+        scheduledDate: now,
+        actualDate: now,
+        notes: dto.reason || 'جلسة حضور استثنائية',
+        isCancelled: false,
+        isCompleted: false,
+      },
+    });
   }
 }
 

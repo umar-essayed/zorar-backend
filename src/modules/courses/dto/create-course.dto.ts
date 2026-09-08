@@ -6,8 +6,8 @@ export class CreateCourseDto {
   title: string;
 
   @IsString()
-  @IsNotEmpty({ message: 'الاسم اللطيف (slug) مطلوب' })
-  slug: string;
+  @IsOptional()
+  slug?: string;
 
   @IsString()
   @IsNotEmpty({ message: 'معرف السنة الدراسية مطلوب' })
@@ -16,6 +16,10 @@ export class CreateCourseDto {
   @IsString()
   @IsNotEmpty({ message: 'معرف المادة مطلوب' })
   subjectId: string;
+
+  @IsString()
+  @IsOptional()
+  teacherId?: string;
 
   @IsString()
   @IsOptional()
@@ -28,6 +32,10 @@ export class CreateCourseDto {
   @IsNumber()
   @IsOptional()
   price?: number;
+
+  @IsBoolean()
+  @IsOptional()
+  isPublished?: boolean;
 }
 
 export class CreateChapterDto {

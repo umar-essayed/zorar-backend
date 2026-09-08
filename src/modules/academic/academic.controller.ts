@@ -130,5 +130,14 @@ export class AcademicController {
   deleteSubject(@CurrentTenant() tenantId: string, @Param('id') id: string) {
     return this.academicService.deleteSubject(tenantId, id);
   }
+
+  @Post('groups/:id/emergency-session')
+  openEmergencySession(
+    @CurrentTenant() tenantId: string,
+    @Param('id') id: string,
+    @Body() dto: { sessionNumber?: number; title?: string; reason?: string; date?: string },
+  ) {
+    return this.academicService.openEmergencySession(tenantId, id, dto);
+  }
 }
 

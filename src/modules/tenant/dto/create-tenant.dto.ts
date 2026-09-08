@@ -14,11 +14,14 @@ export class CreateTenantDto {
   plan?: PlanType;
 
   @IsString()
-  @IsNotEmpty({ message: 'اسم النطاق الفرعي (Subdomain) مطلوب' })
+  @IsOptional()
   @Matches(/^[a-z0-9-]+$/, { message: 'النطاق الفرعي يجب أن يحتوي على حروف صغيرة وأرقام وعلامة - فقط' })
-  subdomain: string;
+  subdomain?: string;
 
   @IsString()
   @IsOptional()
   customDomain?: string;
+
+  @IsOptional()
+  stages?: string[];
 }

@@ -9,8 +9,11 @@ export class TenantService {
   constructor(private prisma: PrismaService) {}
 
   async createTenant(dto: CreateTenantDto) {
+    const rawSubdomain = dto.subdomain?.trim() || `zorar-${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 5)}`;
+    const cleanSubdomain = rawSubdomain.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-');
+
     const existingSubdomain = await this.prisma.tenant.findUnique({
-      where: { subdomain: dto.subdomain },
+      where: { subdomain: cleanSubdomain },
     });
     if (existingSubdomain) {
       throw new ConflictException('النطاق الفرعي محجوز بالفعل لمؤسسة أخرى');
@@ -18,21 +21,24 @@ export class TenantService {
 
     if (dto.customDomain) {
       const existingDomain = await this.prisma.tenant.findUnique({
-        where: { customDomain: dto.customDomain },
+        where: { customDomain: dto.customDomain.toLowerCase() },
       });
       if (existingDomain) {
         throw new ConflictException('النطاق المخصص محجوز بالفعل');
       }
     }
 
-    return this.prisma.tenant.create({
+    const tenant = await this.prisma.tenant.create({
       data: {
         name: dto.name,
         type: dto.type,
-        plan: dto.plan || 'STANDARD',
-        subdomain: dto.subdomain.toLowerCase(),
+        plan: dto.plan || 'PRO', // خطة برو تلقائياً
+        subdomain: cleanSubdomain,
         customDomain: dto.customDomain ? dto.customDomain.toLowerCase() : null,
-        quotaBalance: 50, // رصيد ترحيبي مبدئي
+        quotaBalance: 10, // 10 رصيد مجاني برو ترحيبي
+        settings: {
+          selectedStages: dto.stages || ['SECONDARY'],
+        },
         brandingConfig: {
           primaryColor: '#2563eb',
           secondaryColor: '#1e40af',
@@ -42,6 +48,20 @@ export class TenantService {
         },
       },
     });
+
+    // تسجيل رصيد الترحيب بالـ History
+    await this.prisma.quotaHistory
+      .create({
+        data: {
+          tenantId: tenant.id,
+          delta: 10,
+          balanceAfter: 10,
+          reason: 'WELCOME_BONUS_PRO',
+        },
+      })
+      .catch(() => null);
+
+    return tenant;
   }
 
   async getTenantBySubdomain(subdomain: string) {
@@ -266,5 +286,107 @@ export class TenantService {
     return this.prisma.user.delete({
       where: { id },
     });
+  }
+
+  async getQuotaPricingAndPlans(tenantId: string) {
+    const tenant = await this.prisma.tenant.findUnique({
+      where: { id: tenantId },
+      select: { id: true, name: true, plan: true, quotaBalance: true, settings: true },
+    });
+    if (!tenant) throw new NotFoundException('المؤسسة غير موجودة');
+
+    const studentsCount = await this.prisma.student.count({ where: { tenantId } });
+
+    const priceStandard = parseFloat(process.env.STUDENT_PRICE_STANDARD_EGP || '2.0');
+    const pricePro = parseFloat(process.env.STUDENT_PRICE_PRO_EGP || '5.0');
+
+    return {
+      currency: 'EGP',
+      currentPlan: tenant.plan,
+      quotaBalance: tenant.quotaBalance,
+      activeStudentsCount: studentsCount,
+      pricing: {
+        standardPerStudentEgp: priceStandard,
+        proPerStudentEgp: pricePro,
+      },
+      planFeatures: {
+        STANDARD: [
+          'دليل وقيد الطلاب وكروت الـ QR',
+          'تسجيل الحضور والغياب الميداني السريع',
+          'إدارة المجموعات والمواعيد والقاعات',
+          'سجل المصروفات والخزينة اليومية وطباعة الإيصالات',
+        ],
+        PRO: [
+          'جميع مميزات الباقة العادية (STANDARD)',
+          'منصة الكورسات الإلكترونية والفيديوهات المشفرة',
+          'بوابة واتساب الذكية لإرسال التنبيهات والغياب تلقائياً',
+          'كوكبيت المدرس ورصد الدرجات والتقييم والواجبات لحظياً',
+          'تحليلات بيانية متقدمة للأرباح والأداء ونسب الإيراد',
+          'دعم فني مخصص ونسخ احتياطي فوري سحابي',
+        ],
+      },
+    };
+  }
+
+  async requestQuotaTopup(
+    tenantId: string,
+    dto: { type: 'STANDARD' | 'PRO'; quantity: number; paymentMethod?: string; notes?: string },
+  ) {
+    const tenant = await this.prisma.tenant.findUnique({
+      where: { id: tenantId },
+      select: { id: true, name: true, settings: true },
+    });
+    if (!tenant) throw new NotFoundException('المؤسسة غير موجودة');
+
+    if (!dto.quantity || dto.quantity <= 0) {
+      throw new BadRequestException('يجب تحديد كمية رصيد صحيحة أكبر من صفر');
+    }
+
+    const priceStandard = parseFloat(process.env.STUDENT_PRICE_STANDARD_EGP || '2.0');
+    const pricePro = parseFloat(process.env.STUDENT_PRICE_PRO_EGP || '5.0');
+    const unitPrice = dto.type === 'PRO' ? pricePro : priceStandard;
+    const totalPrice = unitPrice * dto.quantity;
+
+    const currentSettings = (tenant.settings as Record<string, any>) || {};
+    const existingRequests = (currentSettings.quotaRequests as any[]) || [];
+
+    const newRequest = {
+      id: `req-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+      type: dto.type,
+      quantity: dto.quantity,
+      unitPriceEgp: unitPrice,
+      totalPriceEgp: totalPrice,
+      paymentMethod: dto.paymentMethod || 'INSTAPAY_OR_WALLET',
+      notes: dto.notes || '',
+      status: 'PENDING',
+      createdAt: new Date().toISOString(),
+    };
+
+    existingRequests.unshift(newRequest);
+
+    await this.prisma.tenant.update({
+      where: { id: tenantId },
+      data: {
+        settings: {
+          ...currentSettings,
+          quotaRequests: existingRequests,
+        },
+      },
+    });
+
+    return {
+      success: true,
+      message: 'تم تسجيل طلب شحن الرصيد بنجاح، جاري مراجعته وتأكيده',
+      request: newRequest,
+    };
+  }
+
+  async getQuotaTopupRequests(tenantId: string) {
+    const tenant = await this.prisma.tenant.findUnique({
+      where: { id: tenantId },
+      select: { settings: true },
+    });
+    const currentSettings = (tenant?.settings as Record<string, any>) || {};
+    return (currentSettings.quotaRequests as any[]) || [];
   }
 }

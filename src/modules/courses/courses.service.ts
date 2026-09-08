@@ -33,21 +33,26 @@ export class CoursesService {
   }
 
   async createCourse(tenantId: string, dto: CreateCourseDto) {
+    const rawSlug = dto.slug?.trim() || `course-${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 6)}`;
+    const cleanSlug = rawSlug.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-');
+
     return this.prisma.course.create({
       data: {
         tenantId,
         title: dto.title,
-        slug: dto.slug.toLowerCase(),
+        slug: cleanSlug,
         academicYearId: dto.academicYearId,
         subjectId: dto.subjectId,
-        description: dto.description,
-        thumbnailUrl: dto.thumbnailUrl,
+        teacherId: dto.teacherId || null,
+        description: dto.description || null,
+        thumbnailUrl: dto.thumbnailUrl || null,
         price: dto.price || 0,
-        isPublished: true,
+        isPublished: dto.isPublished !== undefined ? dto.isPublished : true,
       },
       include: {
         academicYear: true,
         subject: true,
+        teacher: true,
       },
     });
   }
@@ -79,12 +84,29 @@ export class CoursesService {
     });
   }
 
-  async getCourses(tenantId: string) {
+  async getCourses(
+    tenantId: string,
+    filters?: { subjectId?: string; academicYearId?: string; teacherId?: string; search?: string },
+  ) {
     return this.prisma.course.findMany({
-      where: { tenantId, isPublished: true },
+      where: {
+        tenantId,
+        ...(filters?.subjectId ? { subjectId: filters.subjectId } : {}),
+        ...(filters?.academicYearId ? { academicYearId: filters.academicYearId } : {}),
+        ...(filters?.teacherId ? { teacherId: filters.teacherId } : {}),
+        ...(filters?.search
+          ? {
+              OR: [
+                { title: { contains: filters.search, mode: 'insensitive' } },
+                { description: { contains: filters.search, mode: 'insensitive' } },
+              ],
+            }
+          : {}),
+      },
       include: {
         academicYear: true,
         subject: true,
+        teacher: true,
         chapters: {
           include: {
             lessons: {
@@ -94,11 +116,13 @@ export class CoursesService {
                 durationSeconds: true,
                 isFreePreview: true,
                 orderIndex: true,
-                pdfAttachmentUrl: true,
               },
             },
           },
           orderBy: { orderIndex: 'asc' },
+        },
+        _count: {
+          select: { chapters: true, exams: true, enrollments: true },
         },
       },
       orderBy: { createdAt: 'desc' },

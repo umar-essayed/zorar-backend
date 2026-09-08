@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, Param, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Body, Param, Query, UseGuards } from '@nestjs/common';
 import { CoursesService } from './courses.service';
 import { CreateCourseDto, CreateChapterDto, CreateLessonDto } from './dto/create-course.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
@@ -26,8 +26,14 @@ export class CoursesController {
   }
 
   @Get()
-  getCourses(@CurrentTenant() tenantId: string) {
-    return this.coursesService.getCourses(tenantId);
+  getCourses(
+    @CurrentTenant() tenantId: string,
+    @Query('subjectId') subjectId?: string,
+    @Query('academicYearId') academicYearId?: string,
+    @Query('teacherId') teacherId?: string,
+    @Query('search') search?: string,
+  ) {
+    return this.coursesService.getCourses(tenantId, { subjectId, academicYearId, teacherId, search });
   }
 
   @Post(':courseId/grant-group')

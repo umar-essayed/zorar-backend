@@ -61,6 +61,27 @@ export class TenantController {
     return this.tenantService.getQuotaHistory(tenantId);
   }
 
+  @Get('quota/pricing')
+  @UseGuards(JwtAuthGuard)
+  getQuotaPricing(@CurrentTenant() tenantId: string) {
+    return this.tenantService.getQuotaPricingAndPlans(tenantId);
+  }
+
+  @Post('quota/request')
+  @UseGuards(JwtAuthGuard)
+  requestQuotaTopup(
+    @CurrentTenant() tenantId: string,
+    @Body() dto: { type: 'STANDARD' | 'PRO'; quantity: number; paymentMethod?: string; notes?: string },
+  ) {
+    return this.tenantService.requestQuotaTopup(tenantId, dto);
+  }
+
+  @Get('quota/requests')
+  @UseGuards(JwtAuthGuard)
+  getQuotaRequests(@CurrentTenant() tenantId: string) {
+    return this.tenantService.getQuotaTopupRequests(tenantId);
+  }
+
   // ===========================================================================
   // المساعدين وفريق العمل (Staff & Assistants)
   // ===========================================================================
