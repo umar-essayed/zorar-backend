@@ -1,0 +1,32 @@
+name: Backend CI & Vercel Serverless Build Test
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  test-and-build:
+    name: Test & Verify Serverless Build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install Dependencies
+        run: npm ci
+
+      - name: Generate Prisma Client & Build
+        run: npm run build
+
+      - name: Run Serverless Handler Tests
+        run: npx ts-node test-serverless.ts

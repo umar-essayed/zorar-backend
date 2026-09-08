@@ -1,0 +1,1023 @@
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// =============================================================================
+// 1. إدارة المؤسسات وتعدد المستأجرين والكوتا (Tenancy, Plans & Pay-As-You-Go)
+// =============================================================================
+
+enum TenantType {
+  CENTER // سنتر تعليمي متعدد المدرسين والقاعات
+  TEACHER // مدرس مستقل
+  CLINIC // عيادة أو مركز طبي
+}
+
+enum PlanType {
+  STANDARD // باقة السنتر الميداني الأساسية (حضور، كروت، خزينة، واتساب، ملازم، تدقيق)
+  PRO // باقة المنصة الرقمية الاحترافية (White-Label Storefront + حماية فيديوهات + امتحانات + واجبات)
+}
+
+model Tenant {
+  id           String     @id @default(uuid())
+  name         String // اسم السنتر أو المدرس
+  type         TenantType @default(CENTER)
+  plan         PlanType   @default(STANDARD)
+  subdomain    String     @unique // مثل: center.eduzorar.com
+  customDomain String?    @unique // دومين خاص اختياري: www.mr-ahmed.com
+
+  // رصيد استهلاك الكوتا الفعلي
+  quotaBalance    Int          @default(100)
+  
+  // تخصيص الهوية والشعار والألوان
+  brandingConfig  Json?        // { logoUrl, primaryColor, secondaryColor, themeMode, heroBannerUrl, faviconUrl }
+  
+  // الإعدادات التشغيلية
+  settings        Json?        // { defaultCurrency: "EGP", allowOfflineMode: true, absenceWarningThreshold: 2 }
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // العلاقات الميدانية والرقمية
+  users              User[]
+  teachers           Teacher[]
+  academicYears      AcademicYear[]
+  subjects           Subject[]
+  classrooms         Classroom[]
+  groups             Group[]
+  students           Student[]
+  studentCards       StudentCard[]
+  attendances        Attendance[]
+  sessionAssessments SessionAssessment[]
+  monthlySubs        MonthlySubscription[]
+  absenceWarnings    AbsenceWarning[]
+  books              Book[]
+  bookSales          BookSale[]
+  courses            Course[]
+  exams              Exam[]
+  assignments        Assignment[]
+  transactions       Transaction[]
+  expenses           Expense[]
+  cashierClosings    CashierClosing[]
+  teacherPayouts     TeacherPayout[]
+  auditLogs          AuditLog[]
+  quotaHistory       QuotaHistory[]
+  storefrontConfig   StorefrontConfig?
+  admissionForms     AdmissionForm[]
+  whatsappQueue      WhatsAppMessage[]
+  groupSessions      GroupSession[]
+
+  @@index([subdomain])
+  @@index([customDomain])
+}
+
+model QuotaHistory {
+  id           String   @id @default(uuid())
+  tenantId     String
+  tenant       Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  delta        Int // موجب عند الشحن وسالب عند الاستهلاك
+  balanceAfter Int
+  reason       String // "STUDENT_ADMISSION", "MANUAL_RECHARGE"
+  referenceId  String?
+  createdAt    DateTime @default(now())
+
+  @@index([tenantId, createdAt])
+}
+
+// =============================================================================
+// 2. المستخدمون والمصادقة والصلاحيات (Users & Roles)
+// =============================================================================
+
+enum UserRole {
+  SUPER_ADMIN // مدير المنصة الكبرى (Platform Owner)
+  TENANT_ADMIN // مالك السنتر أو المدرس
+  TEACHER // مدرس تابع للسنتر
+  ASSISTANT // مساعد / سكرتارية
+  STUDENT // طالب
+}
+
+model User {
+  id       String  @id @default(uuid())
+  tenantId String?
+  tenant   Tenant? @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  name         String
+  phone        String
+  email        String?
+  passwordHash String
+  role         UserRole @default(ASSISTANT)
+
+  // الصلاحيات الدقيقة للسكرتارية
+  permissions Json? // { canCollectCash: true, canScanQR: true, canGradeHomework: true, canManageInventory: false }
+
+  isActive    Boolean   @default(true)
+  lastLoginAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  teacherProfile      Teacher?
+  auditLogs           AuditLog[]
+  collectedCash       Transaction[]          @relation("AssistantTransactions")
+  recordedExpenses    Expense[]              @relation("AssistantExpenses")
+  cashierClosings     CashierClosing[]
+  scannedScans        Attendance[]           @relation("AssistantScans")
+  assessmentsRecorded SessionAssessment[]    @relation("AssistantAssessments")
+  gradedAssignments   AssignmentSubmission[] @relation("AssistantGrading")
+
+  @@unique([tenantId, phone])
+  @@index([tenantId, role])
+}
+
+// =============================================================================
+// 3. المدرسون وتصفية الأرباح (Teachers & Commission Splits)
+// =============================================================================
+
+enum CommissionType {
+  PERCENTAGE // نسبة مئوية (مثلاً 75% للمدرس و 25% للسنتر)
+  FIXED_PER_STUDENT // مبلغ ثابت لكل طالب حاضر للسنتر
+}
+
+model Teacher {
+  id       String @id @default(uuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  userId String? @unique // ربط اختياري بحساب مستخدم لتسجيل الدخول
+  user   User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  name      String
+  phone     String
+  subjectId String
+  subject   Subject @relation(fields: [subjectId], references: [id])
+
+  bio       String?
+  avatarUrl String?
+
+  // اتفاقية توزيع الأرباح مع السنتر
+  commissionType   CommissionType @default(PERCENTAGE)
+  centerPercentage Decimal        @default(20.0) @db.Decimal(5, 2)
+  fixedCenterFee   Decimal        @default(0.0) @db.Decimal(10, 2)
+
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  groups  Group[]
+  books   Book[]
+  courses Course[]
+  payouts TeacherPayout[]
+  transactions Transaction[]
+
+  @@index([tenantId])
+}
+
+model TeacherPayout {
+  id       String @id @default(uuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  teacherId String
+  teacher   Teacher @relation(fields: [teacherId], references: [id], onDelete: Cascade)
+
+  periodStart DateTime
+  periodEnd   DateTime
+
+  totalRevenue Decimal @db.Decimal(10, 2)
+  centerShare  Decimal @db.Decimal(10, 2)
+  teacherShare Decimal @db.Decimal(10, 2)
+  deductions   Decimal @default(0.0) @db.Decimal(10, 2) // خصومات (ملازم، قاعات)
+  netPaid      Decimal @db.Decimal(10, 2)
+
+  paidAt     DateTime @default(now())
+  notes      String?
+  receiptUrl String?
+
+  @@index([tenantId, teacherId])
+}
+
+// =============================================================================
+// 4. الهيكل الأكاديمي والقاعات والمجموعات (Academic Structuring)
+// =============================================================================
+
+model AcademicYear {
+  id         String @id @default(uuid())
+  tenantId   String
+  tenant     Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name       String // مثل: الصف الثالث الثانوي
+  orderIndex Int    @default(0)
+
+  groups   Group[]
+  students Student[]
+  books    Book[]
+  courses  Course[]
+  transactions Transaction[]
+
+  @@index([tenantId])
+}
+
+model Subject {
+  id       String  @id @default(uuid())
+  tenantId String
+  tenant   Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name     String // مثل: الفيزياء
+  code     String?
+
+  teachers Teacher[]
+  groups   Group[]
+  books    Book[]
+  courses  Course[]
+  transactions Transaction[]
+
+  @@index([tenantId])
+}
+
+model Classroom {
+  id       String @id @default(uuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name     String // مثل: قاعة الدكتور زويل
+  capacity Int    @default(50)
+
+  groups Group[]
+
+  @@index([tenantId])
+}
+
+model Group {
+  id       String @id @default(uuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  academicYearId String
+  academicYear   AcademicYear @relation(fields: [academicYearId], references: [id], onDelete: Cascade)
+
+  subjectId String
+  subject   Subject @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+
+  teacherId String?
+  teacher   Teacher? @relation(fields: [teacherId], references: [id], onDelete: SetNull)
+
+  classroomId String?
+  classroom   Classroom? @relation(fields: [classroomId], references: [id], onDelete: SetNull)
+
+  name      String // مثال: مجموعة السبت والثلاثاء 4 عصراً
+  dayOfWeek Int[] // [6, 2]
+  startTime String // "16:00"
+  endTime   String // "18:00"
+
+  pricePerSession Decimal @default(0.0) @db.Decimal(10, 2)
+  monthlyFee      Decimal @default(0.0) @db.Decimal(10, 2)
+  sessionsPerMonth Int    @default(4)
+  maxStudents     Int     @default(50)
+  gracePeriodMinutes Int  @default(30) // مهلة التأخير المسموحة بالدقائق قبل احتساب الطالب متأخر LATE
+  allowedGraceSessions Int @default(1) // عدد حصص السماح المسموح بها في حال عدم سداد اشتراك الشهر الجديد
+  startDate       DateTime? // تاريخ أول حصة لبدء الجدولة الزمنية التلقائية
+
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  students    StudentGroup[]
+  attendances Attendance[]
+  monthlySubs MonthlySubscription[]
+  sessions    GroupSession[]
+  transactions Transaction[]
+
+  @@index([tenantId, academicYearId])
+}
+
+// جدول حصص المجموعة ونظام الاستثناءات (Group Sessions & Schedule Exceptions)
+model GroupSession {
+  id            String    @id @default(uuid())
+  tenantId      String
+  tenant        Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  groupId       String
+  group         Group     @relation(fields: [groupId], references: [id], onDelete: Cascade)
+
+  sessionNumber Int       // رقم الحصة بالدورة/المجموعة (1, 2, 3...)
+  title         String?   // عنوان الحصة أو موضوع الدرس
+  scheduledDate DateTime  // تاريخ الحصة المجدولة
+  actualDate    DateTime? // تاريخ الانعقاد الفعلي في حال الاستثناء أو التأجيل
+  startTime     String?   // وقت البدء "16:00"
+  endTime       String?   // وقت الانتهاء "18:00"
+  isCancelled   Boolean   @default(false)
+  isCompleted   Boolean   @default(false)
+  notes         String?   // سبب التأجيل أو ملاحظات الاستثناء
+
+  attendances   Attendance[]
+
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@unique([groupId, sessionNumber])
+  @@index([tenantId, groupId, scheduledDate])
+}
+
+// =============================================================================
+// 5. الطلاب، كروت الـ QR والاشتراكات الشهرية (Students & Education Passes)
+// =============================================================================
+
+model Student {
+  id       String @id @default(uuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  studentCode   String // كود الطالب الفريد بالسنتر (مثل: 10452)
+  name          String
+  phone         String
+  guardianPhone String // واتساب ولي الأمر
+
+  academicYearId String
+  academicYear   AcademicYear @relation(fields: [academicYearId], references: [id])
+
+  schoolName          String?
+  points              Int     @default(0) // نقاط التفوق والالتزام
+  walletBalance       Decimal @default(0.0) @db.Decimal(10, 2)
+  consecutiveAbsences Int     @default(0) // عدد الغيابات المتتالية لرصد الإنذارات
+  notes               String?
+
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  card            StudentCard?
+  groups          StudentGroup[]
+  attendances     Attendance[]
+  assessments     SessionAssessment[]
+  monthlySubs     MonthlySubscription[]
+  absenceWarnings AbsenceWarning[]
+  bookSales       BookSale[]
+  transactions    Transaction[]
+  courseAccess    StudentCourseEnrollment[]
+  examSubmissions ExamSubmission[]
+  videoWatchLogs  VideoWatchLog[]
+  submissions     AssignmentSubmission[]
+
+  @@unique([tenantId, studentCode])
+  @@index([tenantId, phone])
+  @@index([tenantId, guardianPhone])
+}
+
+model StudentCard {
+  id       String @id @default(uuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  studentId String  @unique
+  student   Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  qrPayload    String    @unique
+  barcode      String?
+  printedAt    DateTime?
+  reprintCount Int       @default(0)
+  createdAt    DateTime  @default(now())
+
+  @@index([tenantId, qrPayload])
+}
+
+model StudentGroup {
+  id              String   @id @default(uuid())
+  studentId       String
+  groupId         String
+  student         Student  @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  group           Group    @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  joinedAt        DateTime @default(now())
+  isDiscounted    Boolean  @default(false)
+  discountPercent Decimal? @db.Decimal(5, 2)
+
+  @@unique([studentId, groupId])
+  @@index([studentId])
+  @@index([groupId])
+}
+
+// نظام "اشتراك الشهر" (Monthly Pass) لربط الحضور الميداني بالمنصة تلقائياً
+model MonthlySubscription {
+  id       String @id @default(uuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  studentId String
+  student   Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  groupId String
+  group   Group  @relation(fields: [groupId], references: [id], onDelete: Cascade)
+
+  monthNumber Int // رقم الشهر من 1 إلى 12
+  monthName   String // مثل "شهر أكتوبر 2026"
+  amount      Decimal   @db.Decimal(10, 2)
+  isPaid      Boolean   @default(false)
+  paidAt      DateTime?
+
+  createdAt DateTime @default(now())
+
+  @@unique([studentId, groupId, monthNumber])
+  @@index([tenantId, studentId])
+}
+
+// =============================================================================
+// 6. الحضور وتقييم الحصة الميداني (Attendance & In-Session Assessment)
+// =============================================================================
+
+enum AttendanceStatus {
+  PRESENT
+  ABSENT
+  LATE
+  EXCUSED
+  MAKEUP // حضور تعويضي لمجموعة أخرى
+}
+
+model Attendance {
+  id       String @id @default(uuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  studentId String
+  student   Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  groupId String
+  group   Group  @relation(fields: [groupId], references: [id], onDelete: Cascade)
+
+  scannedById String?
+  scannedBy   User?   @relation("AssistantScans", fields: [scannedById], references: [id], onDelete: SetNull)
+
+  status          AttendanceStatus @default(PRESENT)
+  lateMinutes     Int              @default(0) // عدد دقائق التأخير إذا حضر بعد المهلة
+  scannedAt       DateTime         @default(now())
+  isOfflineSynced Boolean          @default(false)
+  whatsappSent    Boolean          @default(false)
+
+  // الجلسة وحصص السماح (Session tracking & Grace Sessions)
+  sessionId       String?
+  session         GroupSession?    @relation(fields: [sessionId], references: [id], onDelete: SetNull)
+  sessionNumber   Int?             // رقم الحصة بالدورة/المجموعة (1, 2, 3...)
+  isGraceSession  Boolean          @default(false) // هل احتسبت كحصة سماح دون سداد اشتراك الشهر الجديد
+
+  // الحضور التعويضي (لو الطالب عوض في مجموعة أخرى)
+  isMakeup        Boolean @default(false)
+  originalGroupId String?
+
+  assessment SessionAssessment?
+
+  @@index([tenantId, groupId, scannedAt])
+  @@index([tenantId, studentId])
+  @@index([tenantId, groupId, sessionId])
+}
+
+enum HomeworkStatus {
+  DONE
+  INCOMPLETE
+  NOT_DONE
+}
+
+model SessionAssessment {
+  id       String @id @default(uuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  attendanceId String     @unique
+  attendance   Attendance @relation(fields: [attendanceId], references: [id], onDelete: Cascade)
+
+  studentId String
+  student   Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  recordedById String?
+  recordedBy   User?   @relation("AssistantAssessments", fields: [recordedById], references: [id], onDelete: SetNull)
+
+  homeworkStatus HomeworkStatus @default(DONE)
+  quizScore      Decimal?       @db.Decimal(5, 2) // درجة التسميع / الكويز الميداني (مثال: 9.5)
+  quizTotal      Decimal?       @db.Decimal(5, 2) // الدرجة الكلية (مثال: 10)
+  behaviorNotes  String?
+
+  whatsappReportSent Boolean  @default(false) // تم إرسال تقرير التسميع والواجب لولي الأمر
+  createdAt          DateTime @default(now())
+
+  @@index([tenantId, studentId])
+}
+
+enum WarningLevel {
+  FIRST_WARNING // غياب أول
+  SECOND_WARNING // غياب ثاني متتالي
+  SUSPENDED // إيقاف حتى مراجعة ولي الأمر
+}
+
+model AbsenceWarning {
+  id       String @id @default(uuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  studentId String
+  student   Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  level             WarningLevel
+  consecutiveDays   Int
+  isResolved        Boolean      @default(false)
+  resolvedAt        DateTime?
+  guardianContacted Boolean      @default(false)
+  notes             String?
+  createdAt         DateTime     @default(now())
+
+  @@index([tenantId, studentId])
+}
+
+// =============================================================================
+// 7. إدارة الملازم والمذكرات والمخزون (Books & Inventory)
+// =============================================================================
+
+model Book {
+  id       String @id @default(uuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  subjectId String
+  subject   Subject @relation(fields: [subjectId], references: [id])
+
+  academicYearId String
+  academicYear   AcademicYear @relation(fields: [academicYearId], references: [id])
+
+  teacherId String?
+  teacher   Teacher? @relation(fields: [teacherId], references: [id], onDelete: SetNull)
+
+  title       String // مثل: مذكرة ليلة الامتحان فيزياء الحديثة
+  description String?
+  coverUrl    String?
+
+  printCost Decimal @default(0.0) @db.Decimal(10, 2) // تكلفة الطباعة
+  salePrice Decimal @db.Decimal(10, 2) // سعر البيع للطالب
+
+  stockQuantity Int @default(0) // رصيد المخزن الحالي
+  minStockAlert Int @default(10) // حد التنبيه لنقص الكمية
+
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  sales BookSale[]
+
+  @@index([tenantId])
+}
+
+model BookSale {
+  id       String @id @default(uuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  bookId String
+  book   Book   @relation(fields: [bookId], references: [id], onDelete: Cascade)
+
+  studentId String
+  student   Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  assistantId String?
+  quantity    Int     @default(1)
+  unitPrice   Decimal @db.Decimal(10, 2)
+  totalPrice  Decimal @db.Decimal(10, 2)
+
+  createdAt DateTime @default(now())
+
+  @@index([tenantId, bookId])
+  @@index([tenantId, studentId])
+}
+
+// =============================================================================
+// 8. الخزينة، المصروفات وتدقيق السكرتارية (Finance, Expenses & Shift Audit)
+// =============================================================================
+
+enum TransactionType {
+  LESSON_SESSION_FEE
+  MONTHLY_SUBSCRIPTION
+  BOOK_NOTE_PURCHASE
+  WALLET_TOPUP
+  OTHER_INCOME
+}
+
+enum PaymentMethod {
+  CASH
+  VODAFONE_CASH
+  INSTAPAY
+  CREDIT_CARD
+}
+
+model Transaction {
+  id       String @id @default(uuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  receiptNo String?
+  studentId String?
+  student   Student? @relation(fields: [studentId], references: [id], onDelete: SetNull)
+
+  groupId String?
+  group   Group?   @relation(fields: [groupId], references: [id], onDelete: SetNull)
+
+  teacherId String?
+  teacher   Teacher? @relation(fields: [teacherId], references: [id], onDelete: SetNull)
+
+  subjectId String?
+  subject   Subject? @relation(fields: [subjectId], references: [id], onDelete: SetNull)
+
+  academicYearId String?
+  academicYear   AcademicYear? @relation(fields: [academicYearId], references: [id], onDelete: SetNull)
+
+  assistantId String?
+  assistant   User?   @relation("AssistantTransactions", fields: [assistantId], references: [id], onDelete: SetNull)
+
+  amount      Decimal         @db.Decimal(10, 2)
+  type        TransactionType
+  method      PaymentMethod   @default(CASH)
+  description String?
+  createdAt   DateTime        @default(now())
+
+  @@index([tenantId, createdAt])
+  @@index([tenantId, assistantId])
+  @@index([tenantId, groupId])
+  @@index([tenantId, teacherId])
+  @@index([tenantId, subjectId])
+  @@index([tenantId, academicYearId])
+}
+
+enum ExpenseCategory {
+  RENT // إيجار مقر أو قاعات
+  STAFF_SALARIES // مرتبات سكرتارية وعمال
+  UTILITIES // كهرباء ومياه وإنترنت
+  PRINTING // فواتير مطابع الملازم
+  BUFFET_HOSPITALITY // بوفيه وضيافة
+  MARKETING // حملات تسويقية
+  MAINTENANCE // صيانة ونظافة
+  OTHER
+}
+
+model Expense {
+  id       String @id @default(uuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  category    ExpenseCategory @default(OTHER)
+  amount      Decimal         @db.Decimal(10, 2)
+  description String // تفاصيل المصروف
+  receiptUrl  String? // صورة الفاتورة
+
+  recordedById String?
+  recordedBy   User?   @relation("AssistantExpenses", fields: [recordedById], references: [id], onDelete: SetNull)
+
+  paidAt DateTime @default(now())
+
+  @@index([tenantId, paidAt])
+}
+
+model CashierClosing {
+  id       String @id @default(uuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  assistantId String
+  assistant   User   @relation(fields: [assistantId], references: [id], onDelete: Cascade)
+
+  shiftStart DateTime
+  shiftEnd   DateTime @default(now())
+
+  totalExpectedCash Decimal  @db.Decimal(10, 2)
+  totalActualCash   Decimal  @db.Decimal(10, 2)
+  varianceAmount    Decimal  @default(0.0) @db.Decimal(10, 2)
+  isApproved        Boolean  @default(false)
+  notes             String?
+  createdAt         DateTime @default(now())
+
+  @@index([tenantId, assistantId])
+}
+
+model AuditLog {
+  id       String @id @default(uuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  action     String // "COLLECTED_CASH", "QR_SCANNED", "BOOK_DISPATCHED", "TEACHER_PAID"
+  entityType String
+  entityId   String?
+  details    Json?
+  ipAddress  String?
+  createdAt  DateTime @default(now())
+
+  @@index([tenantId, action])
+  @@index([tenantId, createdAt])
+}
+
+// =============================================================================
+// 9. المنصة الرقمية وفيديوهات يوتيوب المشفرة والواجبات (E-Learning & DRM)
+// =============================================================================
+
+model Course {
+  id       String @id @default(uuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  teacherId String?
+  teacher   Teacher? @relation(fields: [teacherId], references: [id], onDelete: SetNull)
+
+  academicYearId String
+  academicYear   AcademicYear @relation(fields: [academicYearId], references: [id])
+
+  subjectId String
+  subject   Subject @relation(fields: [subjectId], references: [id])
+
+  title        String
+  slug         String
+  description  String?
+  thumbnailUrl String?
+  price        Decimal @default(0.0) @db.Decimal(10, 2)
+
+  isPublished Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  chapters    Chapter[]
+  exams       Exam[]
+  enrollments StudentCourseEnrollment[]
+
+  @@unique([tenantId, slug])
+  @@index([tenantId, isPublished])
+}
+
+model Chapter {
+  id       String @id @default(uuid())
+  courseId String
+  course   Course @relation(fields: [courseId], references: [id], onDelete: Cascade)
+
+  title      String // مثال: الأسبوع الأول - التيار الكهربي
+  orderIndex Int       @default(0)
+  unlockDate DateTime? // Drip Content: فتح المحتوى تدريجياً في موعد محدد
+
+  lessons Lesson[]
+
+  @@index([courseId])
+}
+
+model Lesson {
+  id        String  @id @default(uuid())
+  chapterId String
+  chapter   Chapter @relation(fields: [chapterId], references: [id], onDelete: Cascade)
+
+  title      String
+  orderIndex Int    @default(0)
+
+  // كود يوتيوب المشفر
+  encryptedVideoId String
+  durationSeconds  Int     @default(0)
+  isFreePreview    Boolean @default(false)
+  pdfAttachmentUrl String?
+  homeworkDetails  String?
+
+  assignments Assignment[]
+  watchLogs   VideoWatchLog[]
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+
+  @@index([chapterId])
+}
+
+model Assignment {
+  id       String @id @default(uuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  lessonId String
+  lesson   Lesson @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+
+  title            String // عنوان الواجب
+  description      String?
+  pdfAttachmentUrl String? // ملف شيت الأسئلة
+  dueDate          DateTime?
+  maxScore         Int       @default(10)
+
+  submissions AssignmentSubmission[]
+  createdAt   DateTime               @default(now())
+
+  @@index([tenantId, lessonId])
+}
+
+model AssignmentSubmission {
+  id           String     @id @default(uuid())
+  assignmentId String
+  assignment   Assignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+
+  studentId String
+  student   Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  submissionUrls String[] // روابط صور كشكول الواجب المرفوعة من الطالب
+  score          Decimal? @db.Decimal(5, 2)
+  feedbackNotes  String?
+
+  gradedById String?
+  gradedBy   User?     @relation("AssistantGrading", fields: [gradedById], references: [id], onDelete: SetNull)
+  gradedAt   DateTime?
+
+  submittedAt DateTime @default(now())
+
+  @@unique([assignmentId, studentId])
+  @@index([studentId])
+}
+
+model StudentCourseEnrollment {
+  id        String  @id @default(uuid())
+  studentId String
+  courseId  String
+  student   Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  course    Course  @relation(fields: [courseId], references: [id], onDelete: Cascade)
+
+  source     String    @default("AUTO_OFFLINE_SYNC")
+  unlockedAt DateTime  @default(now())
+  expiresAt  DateTime?
+
+  @@unique([studentId, courseId])
+  @@index([studentId])
+}
+
+model VideoWatchLog {
+  id        String  @id @default(uuid())
+  studentId String
+  lessonId  String
+  student   Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  lesson    Lesson  @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+
+  watchedSeconds Int      @default(0)
+  isCompleted    Boolean  @default(false)
+  lastWatchedAt  DateTime @default(now())
+
+  @@unique([studentId, lessonId])
+}
+
+// =============================================================================
+// 10. الامتحانات الإلكترونية وبنك الأسئلة (Online Exams & Questions)
+// =============================================================================
+
+model Exam {
+  id       String @id @default(uuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  courseId String?
+  course   Course? @relation(fields: [courseId], references: [id], onDelete: SetNull)
+
+  title           String
+  durationMinutes Int    @default(30)
+  passingScore    Int    @default(50)
+  totalScore      Int    @default(100)
+
+  shuffleQuestions Boolean  @default(true)
+  showModelAnswers Boolean  @default(true)
+  isPublished      Boolean  @default(false)
+  createdAt        DateTime @default(now())
+
+  questions   Question[]
+  submissions ExamSubmission[]
+
+  @@index([tenantId])
+}
+
+enum QuestionType {
+  MCQ
+  TRUE_FALSE
+}
+
+model Question {
+  id     String @id @default(uuid())
+  examId String
+  exam   Exam   @relation(fields: [examId], references: [id], onDelete: Cascade)
+
+  text          String
+  imageUrl      String?
+  type          QuestionType @default(MCQ)
+  points        Int          @default(1)
+  options       Json // [{ id: "A", text: "..." }]
+  correctOption String
+  explanation   String?
+
+  @@index([examId])
+}
+
+model ExamSubmission {
+  id     String @id @default(uuid())
+  examId String
+  exam   Exam   @relation(fields: [examId], references: [id], onDelete: Cascade)
+
+  studentId String
+  student   Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  score       Int
+  total       Int
+  answers     Json
+  submittedAt DateTime @default(now())
+
+  @@index([examId])
+  @@index([studentId])
+}
+
+// =============================================================================
+// 11. محرك تخصيص المنصة والمتاجر (Storefront Customizer Engine)
+// =============================================================================
+
+model StorefrontConfig {
+  id       String @id @default(uuid())
+  tenantId String @unique
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  // الهوية المرئية والثيم
+  heroTitle     String? // عنوان البنر الرئيسي (مثل: أهلاً بكم في منصة الفيزياء الحديثة)
+  heroSubtitle  String?
+  heroBannerUrl String?
+  heroVideoUrl  String?
+
+  logoUrl        String?
+  faviconUrl     String?
+  primaryColor   String  @default("#2563eb")
+  secondaryColor String  @default("#1e40af")
+  accentColor    String  @default("#f59e0b")
+  fontFamily     String  @default("Cairo")
+  themeMode      String  @default("light") // light, dark, system
+
+  // محتوى المتجر التفاعلي
+  testimonials Json? // [{ studentName: "أحمد", score: "99%", quote: "..." }]
+  faqItems     Json? // [{ question: "كيف أسجل؟", answer: "..." }]
+  socialLinks  Json? // { facebook: "...", youtube: "...", telegram: "...", whatsapp: "..." }
+  footerText   String?
+
+  // إعدادات الـ SEO
+  seoTitle       String?
+  seoDescription String?
+  seoKeywords    String?
+  ogImageUrl     String?
+
+  updatedAt DateTime @updatedAt
+}
+
+// =============================================================================
+// 12. طوابير الواتساب والأوتوميشن (WhatsApp Anti-Ban Subsystem)
+// =============================================================================
+
+enum MessageStatus {
+  PENDING
+  PROCESSING
+  SENT
+  FAILED
+}
+
+model WhatsAppMessage {
+  id       String @id @default(uuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  recipient    String
+  templateKey  String
+  content      String
+  status       MessageStatus @default(PENDING)
+  retryCount   Int           @default(0)
+  scheduledFor DateTime      @default(now())
+  sentAt       DateTime?
+  errorMessage String?
+
+  @@index([tenantId, status])
+  @@index([status, scheduledFor])
+}
+
+// =============================================================================
+// 13. استمارة الحجز والالتحاق التفاعلية (Dynamic Admission Builder)
+// =============================================================================
+
+model AdmissionForm {
+  id       String @id @default(uuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  title        String
+  slug         String
+  fieldsConfig Json
+  isOpen       Boolean @default(true)
+
+  submissions AdmissionSubmission[]
+
+  @@unique([tenantId, slug])
+}
+
+model AdmissionSubmission {
+  id     String        @id @default(uuid())
+  formId String
+  form   AdmissionForm @relation(fields: [formId], references: [id], onDelete: Cascade)
+
+  studentName       String
+  phone             String
+  guardianPhone     String
+  formData          Json
+  status            String   @default("PENDING")
+  approvedStudentId String?
+  submittedAt       DateTime @default(now())
+
+  @@index([formId, status])
+}
