@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, Param, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Put, Delete, Body, Param, UseGuards } from '@nestjs/common';
 import { ExamsService } from './exams.service';
 import { CreateExamDto, SubmitExamDto } from './dto/create-exam.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
@@ -18,6 +18,21 @@ export class ExamsController {
   @Get()
   getExams(@CurrentTenant() tenantId: string) {
     return this.examsService.getExamsByTenant(tenantId);
+  }
+
+  @Get(':id')
+  getExam(@CurrentTenant() tenantId: string, @Param('id') id: string) {
+    return this.examsService.getExamById(tenantId, id);
+  }
+
+  @Put(':id')
+  updateExam(@CurrentTenant() tenantId: string, @Param('id') id: string, @Body() dto: Partial<CreateExamDto>) {
+    return this.examsService.updateExam(tenantId, id, dto);
+  }
+
+  @Delete(':id')
+  deleteExam(@CurrentTenant() tenantId: string, @Param('id') id: string) {
+    return this.examsService.deleteExam(tenantId, id);
   }
 
   @Get(':id/take')

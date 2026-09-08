@@ -84,6 +84,84 @@ export class CoursesService {
     });
   }
 
+  async updateLesson(lessonId: string, dto: Partial<CreateLessonDto>) {
+    const data: any = {};
+    if (dto.title !== undefined) data.title = dto.title;
+    if (dto.rawYouTubeId !== undefined && dto.rawYouTubeId.trim()) {
+      data.encryptedVideoId = this.encryptVideoId(dto.rawYouTubeId.trim());
+    }
+    if (dto.durationSeconds !== undefined) data.durationSeconds = dto.durationSeconds;
+    if (dto.isFreePreview !== undefined) data.isFreePreview = dto.isFreePreview;
+    if (dto.pdfAttachmentUrl !== undefined) data.pdfAttachmentUrl = dto.pdfAttachmentUrl;
+    if (dto.homeworkDetails !== undefined) data.homeworkDetails = dto.homeworkDetails;
+    if (dto.orderIndex !== undefined) data.orderIndex = dto.orderIndex;
+
+    return this.prisma.lesson.update({
+      where: { id: lessonId },
+      data,
+    });
+  }
+
+  async deleteLesson(lessonId: string) {
+    return this.prisma.lesson.delete({
+      where: { id: lessonId },
+    });
+  }
+
+  async updateChapter(chapterId: string, dto: Partial<CreateChapterDto>) {
+    return this.prisma.chapter.update({
+      where: { id: chapterId },
+      data: {
+        ...(dto.title ? { title: dto.title } : {}),
+        ...(dto.orderIndex !== undefined ? { orderIndex: dto.orderIndex } : {}),
+      },
+    });
+  }
+
+  async deleteChapter(chapterId: string) {
+    return this.prisma.chapter.delete({
+      where: { id: chapterId },
+    });
+  }
+
+  async reorderLessons(chapterId: string, lessonIds: string[]) {
+    const updates = lessonIds.map((id, index) =>
+      this.prisma.lesson.update({
+        where: { id },
+        data: { orderIndex: index },
+      }),
+    );
+    return this.prisma.$transaction(updates);
+  }
+
+  async getCourseById(tenantId: string, courseId: string) {
+    const course = await this.prisma.course.findFirst({
+      where: { id: courseId, tenantId },
+      include: {
+        academicYear: true,
+        subject: true,
+        teacher: true,
+        chapters: {
+          include: {
+            lessons: {
+              orderBy: { orderIndex: 'asc' },
+            },
+          },
+          orderBy: { orderIndex: 'asc' },
+        },
+        exams: {
+          include: {
+            questions: true,
+            _count: { select: { submissions: true } },
+          },
+          orderBy: { createdAt: 'desc' },
+        },
+      },
+    });
+    if (!course) throw new NotFoundException('الكورس غير موجود');
+    return course;
+  }
+
   async getCourses(
     tenantId: string,
     filters?: { subjectId?: string; academicYearId?: string; teacherId?: string; search?: string },

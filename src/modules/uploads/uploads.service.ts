@@ -91,7 +91,8 @@ export class UploadsService {
       await this.s3Client.send(command);
 
       // الرابط العام المباشر للملف عبر السيرفر الداخلي أو الدومين المخصص
-      const publicUrl = `/api/v1/uploads/file/${s3Key}`;
+      const backendBaseUrl = (this.configService.get<string>('BACKEND_BASE_URL') || 'https://zoraredu-backend.vercel.app').replace(/\/+$/, '');
+      const publicUrl = `${backendBaseUrl}/api/v1/uploads/file/${s3Key}`;
 
       this.logger.log(
         `File successfully uploaded to R2: key="${s3Key}" size=${file.size} bytes`,

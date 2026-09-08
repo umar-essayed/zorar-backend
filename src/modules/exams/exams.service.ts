@@ -137,4 +137,69 @@ export class ExamsService {
       orderBy: { createdAt: 'desc' },
     });
   }
+
+  async getExamById(tenantId: string, examId: string) {
+    const exam = await this.prisma.exam.findFirst({
+      where: { id: examId, tenantId },
+      include: {
+        questions: true,
+        _count: { select: { submissions: true } },
+      },
+    });
+    if (!exam) throw new NotFoundException('الامتحان غير موجود');
+    return exam;
+  }
+
+  async updateExam(tenantId: string, examId: string, dto: Partial<CreateExamDto>) {
+    const existing = await this.prisma.exam.findFirst({
+      where: { id: examId, tenantId },
+    });
+    if (!existing) throw new NotFoundException('الامتحان غير موجود');
+
+    let totalScore = existing.totalScore;
+    if (dto.questions && dto.questions.length > 0) {
+      totalScore = dto.questions.reduce((sum, q) => sum + (q.points || 1), 0);
+    }
+
+    return this.prisma.$transaction(async (tx) => {
+      if (dto.questions && dto.questions.length > 0) {
+        await tx.question.deleteMany({ where: { examId } });
+        await tx.question.createMany({
+          data: dto.questions.map((q) => ({
+            examId,
+            text: q.text,
+            imageUrl: q.imageUrl,
+            points: q.points || 1,
+            options: q.options as any,
+            correctOption: q.correctOption,
+            explanation: q.explanation,
+          })),
+        });
+      }
+
+      return tx.exam.update({
+        where: { id: examId },
+        data: {
+          ...(dto.title ? { title: dto.title } : {}),
+          ...(dto.courseId !== undefined ? { courseId: dto.courseId } : {}),
+          ...(dto.durationMinutes ? { durationMinutes: dto.durationMinutes } : {}),
+          ...(dto.passingScore ? { passingScore: dto.passingScore } : {}),
+          ...(dto.shuffleQuestions !== undefined ? { shuffleQuestions: dto.shuffleQuestions } : {}),
+          totalScore,
+        },
+        include: { questions: true },
+      });
+    });
+  }
+
+  async deleteExam(tenantId: string, examId: string) {
+    const exam = await this.prisma.exam.findFirst({
+      where: { id: examId, tenantId },
+    });
+    if (!exam) throw new NotFoundException('الامتحان غير موجود');
+
+    return this.prisma.exam.delete({
+      where: { id: examId },
+    });
+  }
 }

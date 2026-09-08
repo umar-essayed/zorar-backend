@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, Param, Query, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Put, Delete, Body, Param, Query, UseGuards } from '@nestjs/common';
 import { CoursesService } from './courses.service';
 import { CreateCourseDto, CreateChapterDto, CreateLessonDto } from './dto/create-course.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
@@ -15,14 +15,44 @@ export class CoursesController {
     return this.coursesService.createCourse(tenantId, dto);
   }
 
+  @Get(':courseId')
+  getCourse(@CurrentTenant() tenantId: string, @Param('courseId') courseId: string) {
+    return this.coursesService.getCourseById(tenantId, courseId);
+  }
+
   @Post(':courseId/chapters')
   addChapter(@Param('courseId') courseId: string, @Body() dto: CreateChapterDto) {
     return this.coursesService.addChapter(courseId, dto);
   }
 
+  @Put('chapters/:chapterId')
+  updateChapter(@Param('chapterId') chapterId: string, @Body() dto: Partial<CreateChapterDto>) {
+    return this.coursesService.updateChapter(chapterId, dto);
+  }
+
+  @Delete('chapters/:chapterId')
+  deleteChapter(@Param('chapterId') chapterId: string) {
+    return this.coursesService.deleteChapter(chapterId);
+  }
+
   @Post('chapters/:chapterId/lessons')
   addLesson(@Param('chapterId') chapterId: string, @Body() dto: CreateLessonDto) {
     return this.coursesService.addLesson(chapterId, dto);
+  }
+
+  @Put('lessons/:lessonId')
+  updateLesson(@Param('lessonId') lessonId: string, @Body() dto: Partial<CreateLessonDto>) {
+    return this.coursesService.updateLesson(lessonId, dto);
+  }
+
+  @Delete('lessons/:lessonId')
+  deleteLesson(@Param('lessonId') lessonId: string) {
+    return this.coursesService.deleteLesson(lessonId);
+  }
+
+  @Post('chapters/:chapterId/reorder')
+  reorderLessons(@Param('chapterId') chapterId: string, @Body('lessonIds') lessonIds: string[]) {
+    return this.coursesService.reorderLessons(chapterId, lessonIds || []);
   }
 
   @Get()
