@@ -1,8 +1,9 @@
-import { Controller, Get, Post, Put, Delete, Body, Param, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Put, Delete, Body, Param, Query, UseGuards } from '@nestjs/common';
 import { AcademicService } from './academic.service';
 import { CreateAcademicYearDto, CreateSubjectDto, CreateClassroomDto, CreateGroupDto } from './dto/create-group.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CurrentTenant } from '../../common/decorators/current-tenant.decorator';
+import { CurrentUser } from '../../common/decorators/current-user.decorator';
 
 @Controller('api/v1/academic')
 @UseGuards(JwtAuthGuard)
@@ -54,8 +55,13 @@ export class AcademicController {
   }
 
   @Get('groups')
-  getGroups(@CurrentTenant() tenantId: string) {
-    return this.academicService.getGroups(tenantId);
+  getGroups(
+    @CurrentTenant() tenantId: string,
+    @CurrentUser() user: any,
+    @Query('teacherId') teacherId?: string,
+  ) {
+    const effectiveTeacherId = user?.role === 'TEACHER' ? user?.teacherId : teacherId;
+    return this.academicService.getGroups(tenantId, effectiveTeacherId);
   }
 
   @Get('groups/:id')

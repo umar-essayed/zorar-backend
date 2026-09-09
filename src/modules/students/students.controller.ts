@@ -23,10 +23,13 @@ export class StudentsController {
   @Get()
   getStudents(
     @CurrentTenant() tenantId: string,
+    @CurrentUser() user: any,
     @Query('search') search?: string,
     @Query('groupId') groupId?: string,
+    @Query('teacherId') teacherId?: string,
   ) {
-    return this.studentsService.getStudents(tenantId, search, groupId);
+    const effectiveTeacherId = user?.role === 'TEACHER' ? user?.teacherId : teacherId;
+    return this.studentsService.getStudents(tenantId, search, groupId, effectiveTeacherId);
   }
 
   @Get(':id')

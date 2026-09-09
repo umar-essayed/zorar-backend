@@ -58,20 +58,24 @@ export class CoursesController {
   @Get()
   getCourses(
     @CurrentTenant() tenantId: string,
+    @CurrentUser() user: any,
     @Query('subjectId') subjectId?: string,
     @Query('academicYearId') academicYearId?: string,
     @Query('teacherId') teacherId?: string,
     @Query('search') search?: string,
   ) {
-    return this.coursesService.getCourses(tenantId, { subjectId, academicYearId, teacherId, search });
+    const effectiveTeacherId = user?.role === 'TEACHER' ? user?.teacherId : teacherId;
+    return this.coursesService.getCourses(tenantId, { subjectId, academicYearId, teacherId: effectiveTeacherId, search });
   }
 
   @Get('platform/analytics')
   getPlatformAnalytics(
     @CurrentTenant() tenantId: string,
+    @CurrentUser() user: any,
     @Query('teacherId') teacherId?: string,
   ) {
-    return this.coursesService.getPlatformAnalytics(tenantId, teacherId);
+    const effectiveTeacherId = user?.role === 'TEACHER' ? user?.teacherId : teacherId;
+    return this.coursesService.getPlatformAnalytics(tenantId, effectiveTeacherId);
   }
 
   @Post(':courseId/grant-group')

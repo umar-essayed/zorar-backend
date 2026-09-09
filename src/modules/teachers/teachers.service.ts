@@ -509,7 +509,7 @@ export class TeachersService {
     const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
     const endOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
 
-    const [todaySessions, monthAttendances, monthPayouts, recentAssessments] = await Promise.all([
+    const [todaySessions, monthAttendances, monthPayouts, recentAssessments, groupTransactions] = await Promise.all([
       this.prisma.groupSession.findMany({
         where: {
           groupId: { in: groupIds },
@@ -535,7 +535,7 @@ export class TeachersService {
       this.prisma.teacherPayout.findMany({
         where: { teacherId: teacher.id },
         orderBy: { paidAt: 'desc' },
-        take: 5,
+        take: 10,
       }),
       this.prisma.sessionAssessment.findMany({
         where: {
@@ -547,6 +547,16 @@ export class TeachersService {
         },
         orderBy: { createdAt: 'desc' },
         take: 10,
+      }),
+      this.prisma.transaction.findMany({
+        where: {
+          tenantId,
+          OR: [
+            { teacherId: teacher.id },
+            { groupId: { in: groupIds } },
+          ],
+        },
+        orderBy: { createdAt: 'desc' },
       }),
     ]);
 
@@ -568,7 +578,24 @@ export class TeachersService {
     });
 
     const avgQuizScore = quizScoresCount > 0 ? Math.round((quizScoresSum / quizScoresCount) * 10) / 10 : 0;
-    const totalEarnings = monthPayouts.reduce((sum, p) => sum + Number(p.netPaid || 0), 0);
+    
+    // حساب الإيرادات الفعلية ومستحقات المدرس من العمليات المالية
+    let totalRevenueCollected = 0;
+    let teacherCalculatedEarnings = 0;
+    for (const tx of groupTransactions) {
+      const amount = Number(tx.amount || 0);
+      totalRevenueCollected += amount;
+      if (teacher.commissionType === 'PERCENTAGE') {
+        const centerShare = (amount * Number(teacher.centerPercentage)) / 100;
+        teacherCalculatedEarnings += (amount - centerShare);
+      } else {
+        const fixedFee = Number(teacher.fixedCenterFee);
+        teacherCalculatedEarnings += Math.max(0, amount - fixedFee);
+      }
+    }
+
+    const totalPaidOut = monthPayouts.reduce((sum, p) => sum + Number(p.netPaid || 0), 0);
+    const unsettledEarnings = Math.max(0, teacherCalculatedEarnings - totalPaidOut);
 
     return {
       teacher: {
@@ -583,11 +610,16 @@ export class TeachersService {
         fixedCenterFee: Number(teacher.fixedCenterFee),
       },
       stats: {
+        totalStudents: totalStudentsCount,
         totalStudentsCount,
         totalGroupsCount: teacher.groups.length,
         totalCoursesCount: teacher.courses.length,
         monthAttendancesCount: monthAttendances,
-        totalEarnings,
+        totalEarnings: teacherCalculatedEarnings > 0 ? teacherCalculatedEarnings : totalPaidOut,
+        totalRevenueCollected,
+        totalPaidOut,
+        unsettledEarnings,
+        walletBalance: unsettledEarnings,
         avgQuizScore,
         homeworkStats: {
           done: homeworkDoneCount,
@@ -611,6 +643,7 @@ export class TeachersService {
         name: g.name,
         academicYearName: g.academicYear?.name ?? '',
         studentsCount: g.students.length,
+        _count: { students: g.students.length },
         pricePerSession: Number(g.pricePerSession),
         monthlyFee: Number(g.monthlyFee),
         startTime: g.startTime,

@@ -410,9 +410,13 @@ export class AcademicService {
     };
   }
 
-  async getGroups(tenantId: string) {
+  async getGroups(tenantId: string, teacherId?: string) {
     return this.prisma.group.findMany({
-      where: { tenantId, isActive: true },
+      where: {
+        tenantId,
+        isActive: true,
+        ...(teacherId ? { teacherId } : {}),
+      },
       include: {
         academicYear: true,
         subject: true,

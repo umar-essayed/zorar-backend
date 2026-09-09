@@ -198,7 +198,7 @@ export class StudentsService {
     return results;
   }
 
-  async getStudents(tenantId: string, search?: string, groupId?: string) {
+  async getStudents(tenantId: string, search?: string, groupId?: string, teacherId?: string) {
     return this.prisma.student.findMany({
       where: {
         tenantId,
@@ -218,11 +218,16 @@ export class StudentsService {
               groups: { some: { groupId } },
             }
           : {}),
+        ...(teacherId
+          ? {
+              groups: { some: { group: { teacherId } } },
+            }
+          : {}),
       },
       include: {
         card: true,
         academicYear: true,
-        groups: { include: { group: true } },
+        groups: { include: { group: { include: { teacher: true, subject: true } } } },
         monthlySubs: true,
       },
       orderBy: { createdAt: 'desc' },
@@ -235,9 +240,16 @@ export class StudentsService {
       include: {
         card: true,
         academicYear: true,
-        groups: { include: { group: true } },
+        groups: { include: { group: { include: { teacher: true, subject: true } } } },
         monthlySubs: true,
-        attendances: { take: 10, orderBy: { scannedAt: 'desc' } },
+        attendances: {
+          take: 20,
+          orderBy: { scannedAt: 'desc' },
+          include: {
+            group: { select: { id: true, name: true } },
+            session: { select: { id: true, sessionNumber: true, title: true, scheduledDate: true } },
+          },
+        },
         transactions: { take: 10, orderBy: { createdAt: 'desc' } },
       },
     });
@@ -354,6 +366,7 @@ export class StudentsService {
         attendances: {
           include: {
             group: { select: { id: true, name: true } },
+            session: { select: { id: true, sessionNumber: true, title: true, scheduledDate: true } },
             assessment: true,
           },
           orderBy: { scannedAt: 'desc' },
