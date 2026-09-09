@@ -399,4 +399,224 @@ export class TenantService {
     const currentSettings = (tenant?.settings as Record<string, any>) || {};
     return (currentSettings.quotaRequests as any[]) || [];
   }
+
+  // ===========================================================================
+  // التحقق من توفر السلاج والنطاق (Slug Availability Check)
+  // ===========================================================================
+  async checkSubdomainAvailability(subdomain: string, tenantId?: string) {
+    const clean = (subdomain || '').trim().toLowerCase();
+    if (!clean || clean.length < 3) {
+      return { available: false, slug: clean, reason: 'يجب أن يتكون المعرّف من 3 أحرف على الأقل' };
+    }
+    const tenant = await this.prisma.tenant.findUnique({
+      where: { subdomain: clean },
+      select: { id: true, name: true },
+    });
+    if (!tenant) {
+      return { available: true, slug: clean, isCurrent: false };
+    }
+    if (tenantId && tenant.id === tenantId) {
+      return { available: true, slug: clean, isCurrent: true };
+    }
+    return { available: false, slug: clean, isCurrent: false };
+  }
+
+  // ===========================================================================
+  // بروفايل وسجل نشاط المساعد المفصل (Staff Activity & Performance Profile)
+  // ===========================================================================
+  async getStaffActivityProfile(tenantId: string, staffId: string, timeRange: string = 'today') {
+    const user = await this.prisma.user.findFirst({
+      where: { id: staffId, tenantId },
+      select: {
+        id: true,
+        name: true,
+        phone: true,
+        email: true,
+        role: true,
+        permissions: true,
+        isActive: true,
+        lastLoginAt: true,
+        createdAt: true,
+      },
+    });
+    if (!user) throw new NotFoundException('الموظف / المساعد غير موجود');
+
+    const now = new Date();
+    let startDate: Date;
+    if (timeRange === 'today') {
+      startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+    } else if (timeRange === 'week') {
+      startDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+    } else if (timeRange === 'month') {
+      startDate = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
+    } else {
+      startDate = new Date(0); // all time
+    }
+
+    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+
+    const [
+      attendancesInPeriod,
+      todayScansCount,
+      transactionsInPeriod,
+      expensesInPeriod,
+      auditLogsInPeriod,
+      totalLoginsCount,
+    ] = await Promise.all([
+      this.prisma.attendance.findMany({
+        where: {
+          tenantId,
+          scannedById: staffId,
+          scannedAt: { gte: startDate },
+        },
+        include: {
+          student: { select: { id: true, name: true, studentCode: true, phone: true } },
+          group: { select: { id: true, name: true } },
+        },
+        orderBy: { scannedAt: 'desc' },
+      }),
+      this.prisma.attendance.count({
+        where: {
+          tenantId,
+          scannedById: staffId,
+          scannedAt: { gte: startOfToday },
+        },
+      }),
+      this.prisma.transaction.findMany({
+        where: {
+          tenantId,
+          assistantId: staffId,
+          createdAt: { gte: startDate },
+        },
+        include: {
+          student: { select: { id: true, name: true, studentCode: true } },
+          group: { select: { name: true } },
+        },
+        orderBy: { createdAt: 'desc' },
+      }),
+      this.prisma.expense.findMany({
+        where: {
+          tenantId,
+          recordedById: staffId,
+          paidAt: { gte: startDate },
+        },
+        orderBy: { paidAt: 'desc' },
+      }),
+      this.prisma.auditLog.findMany({
+        where: {
+          tenantId,
+          userId: staffId,
+          createdAt: { gte: startDate },
+        },
+        orderBy: { createdAt: 'desc' },
+        take: 30,
+      }),
+      this.prisma.auditLog.count({
+        where: {
+          tenantId,
+          userId: staffId,
+          action: 'LOGIN',
+        },
+      }),
+    ]);
+
+    // Group-wise attendance summary for today / period
+    const groupStatsMap: Record<string, { id: string; name: string; count: number; lastScan: Date }> = {};
+    for (const att of attendancesInPeriod) {
+      const gid = att.groupId;
+      const gname = att.group?.name || 'مجموعة عامة';
+      if (!groupStatsMap[gid]) {
+        groupStatsMap[gid] = { id: gid, name: gname, count: 0, lastScan: att.scannedAt };
+      }
+      groupStatsMap[gid].count++;
+      if (att.scannedAt > groupStatsMap[gid].lastScan) {
+        groupStatsMap[gid].lastScan = att.scannedAt;
+      }
+    }
+    const groupsScanned = Object.values(groupStatsMap);
+
+    // Financial summaries
+    let totalCashCollected = 0;
+    let totalExpensesSum = 0;
+    let totalDiscountsSum = 0;
+    const discountsList: any[] = [];
+
+    for (const tx of transactionsInPeriod) {
+      const amt = Number(tx.amount || 0);
+      if (amt > 0) totalCashCollected += amt;
+
+      const desc = (tx.description || '').toLowerCase();
+      if (desc.includes('خصم') || desc.includes('discount')) {
+        totalDiscountsSum += Math.abs(amt);
+        discountsList.push({
+          id: tx.id,
+          studentName: tx.student?.name || 'طالب',
+          studentCode: tx.student?.studentCode || '',
+          amount: amt,
+          description: tx.description,
+          date: tx.createdAt,
+        });
+      }
+    }
+
+    for (const exp of expensesInPeriod) {
+      totalExpensesSum += Number(exp.amount || 0);
+    }
+
+    return {
+      user,
+      timeRange,
+      kpis: {
+        todayScans: todayScansCount,
+        periodScans: attendancesInPeriod.length,
+        totalCashCollected: Math.round(totalCashCollected * 100) / 100,
+        transactionsCount: transactionsInPeriod.length,
+        totalDiscounts: Math.round(totalDiscountsSum * 100) / 100,
+        discountsCount: discountsList.length,
+        totalExpenses: Math.round(totalExpensesSum * 100) / 100,
+        expensesCount: expensesInPeriod.length,
+        totalLogins: Math.max(totalLoginsCount, 1),
+        lastLoginAt: user.lastLoginAt,
+        registeredDaysAgo: Math.max(0, Math.floor((now.getTime() - new Date(user.createdAt).getTime()) / (1000 * 60 * 60 * 24))),
+      },
+      groupsScanned,
+      recentScans: attendancesInPeriod.slice(0, 20).map((a) => ({
+        id: a.id,
+        studentName: a.student?.name || 'طالب',
+        studentCode: a.student?.studentCode || '',
+        groupName: a.group?.name || '',
+        scannedAt: a.scannedAt,
+        status: a.status,
+      })),
+      recentTransactions: transactionsInPeriod.slice(0, 20).map((t) => ({
+        id: t.id,
+        receiptNo: t.receiptNo,
+        amount: Number(t.amount || 0),
+        method: t.method,
+        studentName: t.student?.name || '',
+        groupName: t.group?.name || '',
+        description: t.description,
+        createdAt: t.createdAt,
+      })),
+      discountsList,
+      expensesList: expensesInPeriod.slice(0, 15).map((e) => ({
+        id: e.id,
+        amount: Number(e.amount || 0),
+        title: e.description,
+        description: e.description,
+        category: e.category,
+        receiptUrl: e.receiptUrl,
+        paidAt: e.paidAt,
+        createdAt: e.paidAt,
+      })),
+      auditTimeline: auditLogsInPeriod.map((log) => ({
+        id: log.id,
+        action: log.action,
+        entityType: log.entityType,
+        details: log.details,
+        createdAt: log.createdAt,
+      })),
+    };
+  }
 }
+

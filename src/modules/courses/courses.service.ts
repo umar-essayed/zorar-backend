@@ -293,7 +293,27 @@ export class CoursesService {
       where: { id: { in: groupIds }, tenantId },
       include: { students: true },
     });
-    if (!groups.length) throw new NotFoundException('لم يتم العثور على أي من المجموعات المحددة');
+
+    // جلب الطلاب الحاليين المسجلين عبر المجموعات لهذا الكورس
+    const currentGroupEnrollments = await this.prisma.studentCourseEnrollment.findMany({
+      where: {
+        courseId,
+        course: { tenantId },
+        source: { startsWith: 'GROUP_ID_' },
+      },
+    });
+
+    const activeSelectedGroupIds = new Set(groupIds);
+
+    // إزالة أي طلاب لمجموعات تم إلغاء تحديدها
+    for (const enr of currentGroupEnrollments) {
+      const gId = enr.source.replace('GROUP_ID_', '');
+      if (!activeSelectedGroupIds.has(gId)) {
+        await this.prisma.studentCourseEnrollment.delete({
+          where: { id: enr.id },
+        }).catch(() => null);
+      }
+    }
 
     let totalGrantedCount = 0;
     const groupNames: string[] = [];
@@ -310,13 +330,13 @@ export class CoursesService {
             },
           },
           update: {
-            source: `GROUP_GRANT_${group.name}`,
+            source: `GROUP_ID_${group.id}`,
             unlockedAt: new Date(),
           },
           create: {
             studentId: sId,
             courseId,
-            source: `GROUP_GRANT_${group.name}`,
+            source: `GROUP_ID_${group.id}`,
             unlockedAt: new Date(),
           },
         });
@@ -329,7 +349,62 @@ export class CoursesService {
       message: `تم ربط وفتح محتوى الكورس لعدد ${totalGrantedCount} طالب في المجموعات (${groupNames.join('، ')}) بنجاح`,
       grantedCount: totalGrantedCount,
       linkedGroups: groupNames,
+      linkedGroupIds: groupIds,
     };
+  }
+
+  async getGrantedGroups(tenantId: string, courseId: string) {
+    const course = await this.prisma.course.findFirst({
+      where: { id: courseId, tenantId },
+    });
+    if (!course) throw new NotFoundException('الكورس غير موجود');
+
+    const enrollments = await this.prisma.studentCourseEnrollment.findMany({
+      where: {
+        courseId,
+        course: { tenantId },
+      },
+      select: {
+        studentId: true,
+        source: true,
+      },
+    });
+
+    const grantedGroupIds = new Set<string>();
+
+    // فحص الـ source المباشر
+    enrollments.forEach((e) => {
+      if (e.source && e.source.startsWith('GROUP_ID_')) {
+        grantedGroupIds.add(e.source.replace('GROUP_ID_', ''));
+      }
+    });
+
+    // فحص مجموعات الطلاب المسجلين
+    const studentIds = enrollments.map((e) => e.studentId);
+    if (studentIds.length > 0) {
+      const studentGroups = await this.prisma.studentGroup.findMany({
+        where: { studentId: { in: studentIds } },
+        select: { groupId: true },
+      });
+      const groupOccurrences: Record<string, number> = {};
+      studentGroups.forEach((sg) => {
+        groupOccurrences[sg.groupId] = (groupOccurrences[sg.groupId] || 0) + 1;
+      });
+
+      const allGroups = await this.prisma.group.findMany({
+        where: { tenantId },
+        include: { students: true },
+      });
+
+      allGroups.forEach((g) => {
+        const count = groupOccurrences[g.id] || 0;
+        if (g.students.length > 0 && count >= g.students.length * 0.5) {
+          grantedGroupIds.add(g.id);
+        }
+      });
+    }
+
+    return Array.from(grantedGroupIds);
   }
 
   async grantCourseToGroup(tenantId: string, courseId: string, groupId: string) {

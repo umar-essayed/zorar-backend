@@ -6,15 +6,31 @@ import { UpdateStorefrontDto } from './dto/update-storefront.dto';
 export class StorefrontService {
   constructor(private prisma: PrismaService) {}
 
-  async updateStorefront(tenantId: string, dto: UpdateStorefrontDto) {
+  async updateStorefront(tenantId: string, dto: any) {
+    const { portalFeatures, ...configData } = dto;
+
+    if (portalFeatures) {
+      const tenant = await this.prisma.tenant.findUnique({ where: { id: tenantId } });
+      const currentSettings = (tenant?.settings as Record<string, any>) || {};
+      await this.prisma.tenant.update({
+        where: { id: tenantId },
+        data: {
+          settings: {
+            ...currentSettings,
+            portalFeatures,
+          },
+        },
+      });
+    }
+
     return this.prisma.storefrontConfig.upsert({
       where: { tenantId },
       update: {
-        ...dto,
+        ...configData,
       },
       create: {
         tenantId,
-        ...dto,
+        ...configData,
       },
     });
   }
@@ -103,12 +119,26 @@ export class StorefrontService {
       throw new NotFoundException('المنصة غير موجودة أو معطلة');
     }
 
+    const currentSettings = (tenant.settings as Record<string, any>) || {};
+    const portalFeatures = currentSettings.portalFeatures || {
+      enableOnlineVideos: true,
+      enableOnlineQuizzes: true,
+      enableOnlineBookStore: true,
+      enableOnlinePayments: true,
+    };
+
+    const platformUrl = tenant.customDomain
+      ? `https://${tenant.customDomain}`
+      : `https://${tenant.subdomain}.zoraredu.com`;
+
     return {
       tenantId: tenant.id,
       tenantName: tenant.name,
       plan: tenant.plan,
       subdomain: tenant.subdomain,
       customDomain: tenant.customDomain,
+      platformUrl,
+      portalFeatures,
       config: tenant.storefrontConfig || {
         heroTitle: `أهلاً بكم في ${tenant.name}`,
         heroSubtitle: 'المنصة التعليمية الرسمية',
@@ -123,3 +153,4 @@ export class StorefrontService {
     };
   }
 }
+

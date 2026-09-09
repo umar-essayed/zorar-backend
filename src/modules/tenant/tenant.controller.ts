@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Put, Delete, Body, Param, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Put, Delete, Body, Param, Query, UseGuards } from '@nestjs/common';
 import { TenantService } from './tenant.service';
 import { CreateTenantDto } from './dto/create-tenant.dto';
 import { UpdateBrandingDto, RechargeQuotaDto } from './dto/update-branding.dto';
@@ -6,6 +6,7 @@ import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { CurrentTenant } from '../../common/decorators/current-tenant.decorator';
+import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { UserRole } from '@prisma/client';
 
 @Controller('api/v1/tenants')
@@ -108,6 +109,34 @@ export class TenantController {
     return this.tenantService.updateStaff(tenantId, id, body);
   }
 
+  @Get('check-subdomain/:subdomain')
+  checkSubdomain(
+    @Param('subdomain') subdomain: string,
+    @Query('tenantId') tenantId?: string,
+  ) {
+    return this.tenantService.checkSubdomainAvailability(subdomain, tenantId);
+  }
+
+  @Get('staff/me/activity')
+  @UseGuards(JwtAuthGuard)
+  getMyActivity(
+    @CurrentTenant() tenantId: string,
+    @CurrentUser('id') userId: string,
+    @Query('timeRange') timeRange?: string,
+  ) {
+    return this.tenantService.getStaffActivityProfile(tenantId, userId, timeRange || 'today');
+  }
+
+  @Get('staff/:id/activity')
+  @UseGuards(JwtAuthGuard)
+  getStaffActivity(
+    @CurrentTenant() tenantId: string,
+    @Param('id') staffId: string,
+    @Query('timeRange') timeRange?: string,
+  ) {
+    return this.tenantService.getStaffActivityProfile(tenantId, staffId, timeRange || 'today');
+  }
+
   @Delete('staff/:id')
   @UseGuards(JwtAuthGuard)
   deleteStaff(
@@ -117,3 +146,4 @@ export class TenantController {
     return this.tenantService.deleteStaff(tenantId, id);
   }
 }
+
