@@ -114,7 +114,7 @@ export class TeachersService {
   }
 
   async getTeachers(tenantId: string) {
-    return this.prisma.teacher.findMany({
+    const teachers = await this.prisma.teacher.findMany({
       where: { tenantId, isActive: true },
       include: {
         subject: true,
@@ -145,6 +145,12 @@ export class TeachersService {
       },
       orderBy: { createdAt: 'desc' },
     });
+
+    return teachers.map((t) => ({
+      ...t,
+      centerPercentage: Number(t.centerPercentage !== null && t.centerPercentage !== undefined ? t.centerPercentage : 20),
+      fixedCenterFee: Number(t.fixedCenterFee || 0),
+    }));
   }
 
   async getTeacherById(tenantId: string, id: string) {
@@ -199,7 +205,11 @@ export class TeachersService {
       },
     });
     if (!teacher) throw new NotFoundException('المدرس غير موجود');
-    return teacher;
+    return {
+      ...teacher,
+      centerPercentage: Number(teacher.centerPercentage !== null && teacher.centerPercentage !== undefined ? teacher.centerPercentage : 20),
+      fixedCenterFee: Number(teacher.fixedCenterFee || 0),
+    };
   }
 
   // حساب وتصفية أرباح المدرس (Teacher Payout Engine)

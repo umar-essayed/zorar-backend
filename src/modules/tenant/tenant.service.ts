@@ -563,22 +563,45 @@ export class TenantService {
       totalExpensesSum += Number(exp.amount || 0);
     }
 
+    const stats = {
+      cashCollected: Math.round(totalCashCollected * 100) / 100,
+      totalCashCollected: Math.round(totalCashCollected * 100) / 100,
+      posInvoicesCount: transactionsInPeriod.length,
+      transactionsCount: transactionsInPeriod.length,
+      attendanceScans: attendancesInPeriod.length,
+      todayScans: todayScansCount,
+      periodScans: attendancesInPeriod.length,
+      discountsGiven: Math.round(totalDiscountsSum * 100) / 100,
+      totalDiscounts: Math.round(totalDiscountsSum * 100) / 100,
+      expensesRecorded: Math.round(totalExpensesSum * 100) / 100,
+      totalExpenses: Math.round(totalExpensesSum * 100) / 100,
+      auditActionsCount: auditLogsInPeriod.length,
+      totalLogins: Math.max(totalLoginsCount, 1),
+      lastLoginAt: user.lastLoginAt,
+      registeredDaysAgo: Math.max(0, Math.floor((now.getTime() - new Date(user.createdAt).getTime()) / (1000 * 60 * 60 * 24))),
+    };
+
+    const recentInvoices = transactionsInPeriod.slice(0, 20).map((t) => ({
+      id: t.id,
+      receiptNo: t.receiptNo,
+      invoiceNumber: t.receiptNo,
+      amount: Number(t.amount || 0),
+      total: Number(t.amount || 0),
+      method: t.method,
+      paymentMethod: t.method,
+      studentName: t.student?.name || '',
+      groupName: t.group?.name || '',
+      description: t.description,
+      paidAt: t.createdAt,
+      createdAt: t.createdAt,
+    }));
+
     return {
       user,
+      staff: user,
       timeRange,
-      kpis: {
-        todayScans: todayScansCount,
-        periodScans: attendancesInPeriod.length,
-        totalCashCollected: Math.round(totalCashCollected * 100) / 100,
-        transactionsCount: transactionsInPeriod.length,
-        totalDiscounts: Math.round(totalDiscountsSum * 100) / 100,
-        discountsCount: discountsList.length,
-        totalExpenses: Math.round(totalExpensesSum * 100) / 100,
-        expensesCount: expensesInPeriod.length,
-        totalLogins: Math.max(totalLoginsCount, 1),
-        lastLoginAt: user.lastLoginAt,
-        registeredDaysAgo: Math.max(0, Math.floor((now.getTime() - new Date(user.createdAt).getTime()) / (1000 * 60 * 60 * 24))),
-      },
+      stats,
+      kpis: stats,
       groupsScanned,
       recentScans: attendancesInPeriod.slice(0, 20).map((a) => ({
         id: a.id,
@@ -588,16 +611,8 @@ export class TenantService {
         scannedAt: a.scannedAt,
         status: a.status,
       })),
-      recentTransactions: transactionsInPeriod.slice(0, 20).map((t) => ({
-        id: t.id,
-        receiptNo: t.receiptNo,
-        amount: Number(t.amount || 0),
-        method: t.method,
-        studentName: t.student?.name || '',
-        groupName: t.group?.name || '',
-        description: t.description,
-        createdAt: t.createdAt,
-      })),
+      recentTransactions: recentInvoices,
+      recentInvoices,
       discountsList,
       expensesList: expensesInPeriod.slice(0, 15).map((e) => ({
         id: e.id,
