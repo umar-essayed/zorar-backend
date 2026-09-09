@@ -112,6 +112,34 @@ export class FinanceService {
         },
       });
 
+      // Auto-mark MonthlySubscription as paid if payment type is MONTHLY_SUBSCRIPTION
+      if (dto.type === 'MONTHLY_SUBSCRIPTION' && student.id && resolvedGroupId) {
+        const now = new Date();
+        await tx.monthlySubscription.upsert({
+          where: {
+            studentId_groupId_monthNumber: {
+              studentId: student.id,
+              groupId: resolvedGroupId,
+              monthNumber: now.getMonth() + 1,
+            },
+          },
+          update: {
+            isPaid: true,
+            paidAt: now,
+          },
+          create: {
+            tenantId,
+            studentId: student.id,
+            groupId: resolvedGroupId,
+            monthNumber: now.getMonth() + 1,
+            monthName: `شهر ${now.toLocaleString('ar-EG', { month: 'long' })} ${now.getFullYear()}`,
+            amount: dto.amount,
+            isPaid: true,
+            paidAt: now,
+          },
+        });
+      }
+
       // تسجيل إجراء المساعد في سجل التدقيق (Audit Log)
       await tx.auditLog.create({
         data: {
@@ -399,6 +427,9 @@ export class FinanceService {
           tenantId,
           monthNumber: now.getMonth() + 1,
           isPaid: false,
+          createdAt: {
+            gte: new Date(now.getFullYear(), 0, 1), // from start of this year
+          },
         },
         _sum: { amount: true },
         _count: { id: true },
