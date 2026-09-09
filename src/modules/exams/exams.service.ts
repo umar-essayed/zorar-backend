@@ -7,9 +7,12 @@ export class ExamsService {
   constructor(private prisma: PrismaService) {}
 
   async createExam(tenantId: string, dto: CreateExamDto) {
-    const totalScore = dto.questions ? dto.questions.reduce((sum, q) => sum + (q.points || 1), 0) : 0;
+    const rawQuestions = dto.questions || [];
+    const totalScore = dto.totalScore ?? dto.totalMarks ?? (rawQuestions.length > 0 ? rawQuestions.reduce((sum, q) => sum + (Number(q.points) || 1), 0) : 100);
     const availableFrom = dto.availableFrom ? new Date(dto.availableFrom) : null;
     const availableUntil = dto.availableUntil ? new Date(dto.availableUntil) : null;
+    const durationMinutes = dto.durationMinutes ?? dto.duration ?? 30;
+    const passingScore = dto.passingScore ?? dto.passingMarks ?? Math.floor(totalScore * 0.5);
 
     return this.prisma.exam.create({
       data: {
@@ -20,24 +23,24 @@ export class ExamsService {
         teacherId: dto.teacherId || null,
         academicYearId: dto.academicYearId || null,
         title: dto.title,
-        instructions: dto.instructions || null,
-        durationMinutes: dto.durationMinutes || 30,
-        passingScore: dto.passingScore || Math.floor(totalScore * 0.5),
-        totalScore,
-        maxAttempts: dto.maxAttempts || 1,
+        instructions: dto.instructions || dto.description || null,
+        durationMinutes: Math.round(durationMinutes),
+        passingScore: Math.round(passingScore),
+        totalScore: Math.round(totalScore),
+        maxAttempts: dto.maxAttempts ? Math.round(dto.maxAttempts) : 1,
         availableFrom,
         availableUntil,
         shuffleQuestions: dto.shuffleQuestions !== undefined ? dto.shuffleQuestions : true,
         showModelAnswers: dto.showModelAnswers !== undefined ? dto.showModelAnswers : true,
         isPublished: dto.isPublished !== undefined ? dto.isPublished : true,
         questions: {
-          create: (dto.questions || []).map((q) => ({
+          create: rawQuestions.map((q) => ({
             text: q.text,
-            imageUrl: q.imageUrl,
-            points: q.points || 1,
-            options: q.options,
-            correctOption: q.correctOption,
-            explanation: q.explanation,
+            imageUrl: q.imageUrl || null,
+            points: q.points ? Math.round(Number(q.points)) : 1,
+            options: q.options as any,
+            correctOption: q.correctOption || q.correctAnswer || 'A',
+            explanation: q.explanation || null,
           })),
         },
       },
@@ -204,8 +207,14 @@ export class ExamsService {
 
     let totalScore = existing.totalScore;
     if (dto.questions && dto.questions.length > 0) {
-      totalScore = dto.questions.reduce((sum, q) => sum + (q.points || 1), 0);
+      totalScore = dto.totalScore ?? dto.totalMarks ?? dto.questions.reduce((sum, q) => sum + (Number(q.points) || 1), 0);
+    } else if (dto.totalScore || dto.totalMarks) {
+      totalScore = dto.totalScore ?? dto.totalMarks ?? existing.totalScore;
     }
+
+    const durationMinutes = dto.durationMinutes ?? dto.duration;
+    const passingScore = dto.passingScore ?? dto.passingMarks;
+    const instructions = dto.instructions !== undefined ? dto.instructions : dto.description;
 
     return this.prisma.$transaction(async (tx) => {
       if (dto.questions && dto.questions.length > 0) {
@@ -214,11 +223,11 @@ export class ExamsService {
           data: dto.questions.map((q) => ({
             examId,
             text: q.text,
-            imageUrl: q.imageUrl,
-            points: q.points || 1,
+            imageUrl: q.imageUrl || null,
+            points: q.points ? Math.round(Number(q.points)) : 1,
             options: q.options as any,
-            correctOption: q.correctOption,
-            explanation: q.explanation,
+            correctOption: q.correctOption || q.correctAnswer || 'A',
+            explanation: q.explanation || null,
           })),
         });
       }
@@ -227,21 +236,21 @@ export class ExamsService {
         where: { id: examId },
         data: {
           ...(dto.title ? { title: dto.title } : {}),
-          ...(dto.instructions !== undefined ? { instructions: dto.instructions } : {}),
+          ...(instructions !== undefined ? { instructions } : {}),
           ...(dto.courseId !== undefined ? { courseId: dto.courseId } : {}),
           ...(dto.groupId !== undefined ? { groupId: dto.groupId } : {}),
           ...(dto.groupIds !== undefined ? { groupIds: dto.groupIds as any } : {}),
           ...(dto.teacherId !== undefined ? { teacherId: dto.teacherId } : {}),
           ...(dto.academicYearId !== undefined ? { academicYearId: dto.academicYearId } : {}),
-          ...(dto.durationMinutes ? { durationMinutes: dto.durationMinutes } : {}),
-          ...(dto.passingScore ? { passingScore: dto.passingScore } : {}),
-          ...(dto.maxAttempts ? { maxAttempts: dto.maxAttempts } : {}),
+          ...(durationMinutes !== undefined ? { durationMinutes: Math.round(durationMinutes) } : {}),
+          ...(passingScore !== undefined ? { passingScore: Math.round(passingScore) } : {}),
+          ...(dto.maxAttempts !== undefined ? { maxAttempts: Math.round(dto.maxAttempts) } : {}),
           ...(dto.availableFrom !== undefined ? { availableFrom: dto.availableFrom ? new Date(dto.availableFrom) : null } : {}),
           ...(dto.availableUntil !== undefined ? { availableUntil: dto.availableUntil ? new Date(dto.availableUntil) : null } : {}),
           ...(dto.shuffleQuestions !== undefined ? { shuffleQuestions: dto.shuffleQuestions } : {}),
           ...(dto.showModelAnswers !== undefined ? { showModelAnswers: dto.showModelAnswers } : {}),
           ...(dto.isPublished !== undefined ? { isPublished: dto.isPublished } : {}),
-          totalScore,
+          totalScore: Math.round(totalScore),
         },
         include: { questions: true },
       });

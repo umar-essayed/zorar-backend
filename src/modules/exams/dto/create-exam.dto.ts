@@ -2,6 +2,10 @@ import { IsString, IsNotEmpty, IsNumber, IsOptional, IsArray, IsBoolean } from '
 
 export class CreateQuestionDto {
   @IsString()
+  @IsOptional()
+  id?: string;
+
+  @IsString()
   @IsNotEmpty({ message: 'نص السؤال مطلوب' })
   text: string;
 
@@ -9,15 +13,24 @@ export class CreateQuestionDto {
   @IsOptional()
   imageUrl?: string;
 
+  @IsString()
+  @IsOptional()
+  type?: string;
+
   @IsNumber()
-  points: number;
+  @IsOptional()
+  points?: number;
 
   @IsArray()
-  options: { id: string; text: string }[];
+  options: any[];
 
   @IsString()
-  @IsNotEmpty({ message: 'الإجابة الصحيحة مطلوبة (مثال: A)' })
-  correctOption: string;
+  @IsOptional()
+  correctOption?: string;
+
+  @IsString()
+  @IsOptional()
+  correctAnswer?: string;
 
   @IsString()
   @IsOptional()
@@ -28,6 +41,10 @@ export class CreateExamDto {
   @IsString()
   @IsNotEmpty({ message: 'عنوان الامتحان مطلوب' })
   title: string;
+
+  @IsString()
+  @IsOptional()
+  description?: string;
 
   @IsString()
   @IsOptional()
@@ -51,14 +68,35 @@ export class CreateExamDto {
 
   @IsString()
   @IsOptional()
+  subjectId?: string;
+
+  @IsString()
+  @IsOptional()
   academicYearId?: string;
 
   @IsNumber()
-  durationMinutes: number;
+  @IsOptional()
+  durationMinutes?: number;
+
+  @IsNumber()
+  @IsOptional()
+  duration?: number;
 
   @IsNumber()
   @IsOptional()
   passingScore?: number;
+
+  @IsNumber()
+  @IsOptional()
+  passingMarks?: number;
+
+  @IsNumber()
+  @IsOptional()
+  totalScore?: number;
+
+  @IsNumber()
+  @IsOptional()
+  totalMarks?: number;
 
   @IsNumber()
   @IsOptional()
@@ -83,7 +121,8 @@ export class CreateExamDto {
   isPublished?: boolean;
 
   @IsArray()
-  questions: CreateQuestionDto[];
+  @IsOptional()
+  questions?: CreateQuestionDto[];
 }
 
 export class SubmitExamDto {
