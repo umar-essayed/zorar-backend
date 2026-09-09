@@ -455,6 +455,8 @@ export class TenantService {
 
     const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
 
+    const isPrivileged = user.role === 'TENANT_ADMIN' || user.role === 'SUPER_ADMIN';
+
     const [
       attendancesInPeriod,
       todayScansCount,
@@ -466,7 +468,7 @@ export class TenantService {
       this.prisma.attendance.findMany({
         where: {
           tenantId,
-          scannedById: staffId,
+          ...(isPrivileged ? {} : { scannedById: staffId }),
           scannedAt: { gte: startDate },
         },
         include: {
@@ -478,14 +480,14 @@ export class TenantService {
       this.prisma.attendance.count({
         where: {
           tenantId,
-          scannedById: staffId,
+          ...(isPrivileged ? {} : { scannedById: staffId }),
           scannedAt: { gte: startOfToday },
         },
       }),
       this.prisma.transaction.findMany({
         where: {
           tenantId,
-          assistantId: staffId,
+          ...(isPrivileged ? {} : { OR: [{ assistantId: staffId }, { assistantId: null }] }),
           createdAt: { gte: startDate },
         },
         include: {

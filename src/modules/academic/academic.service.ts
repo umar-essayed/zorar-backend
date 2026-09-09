@@ -411,7 +411,7 @@ export class AcademicService {
   }
 
   async getGroups(tenantId: string, teacherId?: string) {
-    return this.prisma.group.findMany({
+    const groups = await this.prisma.group.findMany({
       where: {
         tenantId,
         isActive: true,
@@ -425,6 +425,11 @@ export class AcademicService {
         _count: { select: { students: true } },
       },
     });
+
+    return groups.map((g) => ({
+      ...g,
+      studentsCount: g._count?.students ?? 0,
+    }));
   }
 
   async getGroupById(tenantId: string, groupId: string) {
