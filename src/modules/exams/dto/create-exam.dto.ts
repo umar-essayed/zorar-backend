@@ -31,7 +31,27 @@ export class CreateExamDto {
 
   @IsString()
   @IsOptional()
+  instructions?: string;
+
+  @IsString()
+  @IsOptional()
   courseId?: string;
+
+  @IsString()
+  @IsOptional()
+  groupId?: string;
+
+  @IsArray()
+  @IsOptional()
+  groupIds?: string[];
+
+  @IsString()
+  @IsOptional()
+  teacherId?: string;
+
+  @IsString()
+  @IsOptional()
+  academicYearId?: string;
 
   @IsNumber()
   durationMinutes: number;
@@ -40,9 +60,27 @@ export class CreateExamDto {
   @IsOptional()
   passingScore?: number;
 
+  @IsNumber()
+  @IsOptional()
+  maxAttempts?: number;
+
+  @IsOptional()
+  availableFrom?: string | Date;
+
+  @IsOptional()
+  availableUntil?: string | Date;
+
   @IsBoolean()
   @IsOptional()
   shuffleQuestions?: boolean;
+
+  @IsBoolean()
+  @IsOptional()
+  showModelAnswers?: boolean;
+
+  @IsBoolean()
+  @IsOptional()
+  isPublished?: boolean;
 
   @IsArray()
   questions: CreateQuestionDto[];

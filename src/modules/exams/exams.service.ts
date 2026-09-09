@@ -7,20 +7,31 @@ export class ExamsService {
   constructor(private prisma: PrismaService) {}
 
   async createExam(tenantId: string, dto: CreateExamDto) {
-    const totalScore = dto.questions.reduce((sum, q) => sum + (q.points || 1), 0);
+    const totalScore = dto.questions ? dto.questions.reduce((sum, q) => sum + (q.points || 1), 0) : 0;
+    const availableFrom = dto.availableFrom ? new Date(dto.availableFrom) : null;
+    const availableUntil = dto.availableUntil ? new Date(dto.availableUntil) : null;
 
     return this.prisma.exam.create({
       data: {
         tenantId,
         courseId: dto.courseId || null,
+        groupId: dto.groupId || null,
+        groupIds: dto.groupIds ? (dto.groupIds as any) : (dto.groupId ? [dto.groupId] as any : null),
+        teacherId: dto.teacherId || null,
+        academicYearId: dto.academicYearId || null,
         title: dto.title,
-        durationMinutes: dto.durationMinutes,
+        instructions: dto.instructions || null,
+        durationMinutes: dto.durationMinutes || 30,
         passingScore: dto.passingScore || Math.floor(totalScore * 0.5),
         totalScore,
+        maxAttempts: dto.maxAttempts || 1,
+        availableFrom,
+        availableUntil,
         shuffleQuestions: dto.shuffleQuestions !== undefined ? dto.shuffleQuestions : true,
-        isPublished: true,
+        showModelAnswers: dto.showModelAnswers !== undefined ? dto.showModelAnswers : true,
+        isPublished: dto.isPublished !== undefined ? dto.isPublished : true,
         questions: {
-          create: dto.questions.map((q) => ({
+          create: (dto.questions || []).map((q) => ({
             text: q.text,
             imageUrl: q.imageUrl,
             points: q.points || 1,
@@ -52,7 +63,15 @@ export class ExamsService {
       },
     });
 
-    if (!exam) throw new NotFoundException('الامتحان غير متاح');
+    if (!exam) throw new NotFoundException('الامتحان غير متاح أو غير منشور');
+
+    const now = new Date();
+    if (exam.availableFrom && now < new Date(exam.availableFrom)) {
+      throw new BadRequestException(`الامتحان غير متاح حالياً، سيبدأ في: ${new Date(exam.availableFrom).toLocaleString('ar-EG')}`);
+    }
+    if (exam.availableUntil && now > new Date(exam.availableUntil)) {
+      throw new BadRequestException(`انتهت فترة إتاحة هذا الامتحان في: ${new Date(exam.availableUntil).toLocaleString('ar-EG')}`);
+    }
 
     // راندومة الأسئلة إذا كانت الميزة مفعلة
     if (exam.shuffleQuestions) {
@@ -70,12 +89,18 @@ export class ExamsService {
 
     if (!exam) throw new NotFoundException('الامتحان غير موجود');
 
-    // التحقق هل سلّم الطالب هذا الامتحان مسبقاً
-    const existingSubmission = await this.prisma.examSubmission.findFirst({
+    // التحقق من تاريخ إتاحة الامتحان
+    const now = new Date();
+    if (exam.availableUntil && now > new Date(exam.availableUntil)) {
+      throw new BadRequestException('عذراً، انتهت المهلة الزمنية لإتاحة هذا الامتحان');
+    }
+
+    // التحقق من عدد المحاولات السابقة للطالب
+    const submissionsCount = await this.prisma.examSubmission.count({
       where: { examId, studentId },
     });
-    if (existingSubmission) {
-      throw new BadRequestException('لقد قمت بتسليم هذا الامتحان بالفعل');
+    if (submissionsCount >= (exam.maxAttempts || 1)) {
+      throw new BadRequestException(`لقد استنفدت الحد الأقصى للمحاولات المسموحة (${exam.maxAttempts || 1} محاولة)`);
     }
 
     let calculatedScore = 0;
@@ -122,20 +147,34 @@ export class ExamsService {
       submissionId: submission.id,
       score: calculatedScore,
       total: exam.totalScore,
-      percentage: Math.round((calculatedScore / exam.totalScore) * 100),
+      percentage: Math.round((calculatedScore / (exam.totalScore || 1)) * 100),
       passed,
       review: exam.showModelAnswers ? reviewDetails : null,
     };
   }
 
-  async getExamsByTenant(tenantId: string) {
-    return this.prisma.exam.findMany({
-      where: { tenantId },
+  async getExamsByTenant(tenantId: string, filter?: any) {
+    const where: any = { tenantId };
+    if (filter?.groupId) {
+      where.OR = [
+        { groupId: filter.groupId },
+        { groupIds: { array_contains: filter.groupId } },
+      ];
+    }
+    if (filter?.teacherId) where.teacherId = filter.teacherId;
+    if (filter?.courseId) where.courseId = filter.courseId;
+    if (filter?.academicYearId) where.academicYearId = filter.academicYearId;
+
+    const exams = await this.prisma.exam.findMany({
+      where,
       include: {
         _count: { select: { questions: true, submissions: true } },
+        questions: { select: { id: true, points: true } },
       },
       orderBy: { createdAt: 'desc' },
     });
+
+    return exams;
   }
 
   async getExamById(tenantId: string, examId: string) {
@@ -143,6 +182,13 @@ export class ExamsService {
       where: { id: examId, tenantId },
       include: {
         questions: true,
+        submissions: {
+          include: {
+            student: { select: { id: true, name: true, studentCode: true, phone: true } },
+          },
+          orderBy: { submittedAt: 'desc' },
+          take: 50,
+        },
         _count: { select: { submissions: true } },
       },
     });
@@ -181,10 +227,20 @@ export class ExamsService {
         where: { id: examId },
         data: {
           ...(dto.title ? { title: dto.title } : {}),
+          ...(dto.instructions !== undefined ? { instructions: dto.instructions } : {}),
           ...(dto.courseId !== undefined ? { courseId: dto.courseId } : {}),
+          ...(dto.groupId !== undefined ? { groupId: dto.groupId } : {}),
+          ...(dto.groupIds !== undefined ? { groupIds: dto.groupIds as any } : {}),
+          ...(dto.teacherId !== undefined ? { teacherId: dto.teacherId } : {}),
+          ...(dto.academicYearId !== undefined ? { academicYearId: dto.academicYearId } : {}),
           ...(dto.durationMinutes ? { durationMinutes: dto.durationMinutes } : {}),
           ...(dto.passingScore ? { passingScore: dto.passingScore } : {}),
+          ...(dto.maxAttempts ? { maxAttempts: dto.maxAttempts } : {}),
+          ...(dto.availableFrom !== undefined ? { availableFrom: dto.availableFrom ? new Date(dto.availableFrom) : null } : {}),
+          ...(dto.availableUntil !== undefined ? { availableUntil: dto.availableUntil ? new Date(dto.availableUntil) : null } : {}),
           ...(dto.shuffleQuestions !== undefined ? { shuffleQuestions: dto.shuffleQuestions } : {}),
+          ...(dto.showModelAnswers !== undefined ? { showModelAnswers: dto.showModelAnswers } : {}),
+          ...(dto.isPublished !== undefined ? { isPublished: dto.isPublished } : {}),
           totalScore,
         },
         include: { questions: true },

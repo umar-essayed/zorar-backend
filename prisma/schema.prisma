@@ -866,10 +866,20 @@ model Exam {
   courseId String?
   course   Course? @relation(fields: [courseId], references: [id], onDelete: SetNull)
 
+  groupId        String?
+  groupIds       Json? // ["groupId1", "groupId2"]
+  teacherId      String?
+  academicYearId String?
+
   title           String
-  durationMinutes Int    @default(30)
-  passingScore    Int    @default(50)
-  totalScore      Int    @default(100)
+  instructions    String?
+  durationMinutes Int       @default(30)
+  passingScore    Int       @default(50)
+  totalScore      Int       @default(100)
+  maxAttempts     Int       @default(1)
+
+  availableFrom    DateTime?
+  availableUntil   DateTime?
 
   shuffleQuestions Boolean  @default(true)
   showModelAnswers Boolean  @default(true)
@@ -880,6 +890,9 @@ model Exam {
   submissions ExamSubmission[]
 
   @@index([tenantId])
+  @@index([groupId])
+  @@index([teacherId])
+  @@index([academicYearId])
 }
 
 enum QuestionType {
