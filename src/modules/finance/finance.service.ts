@@ -138,6 +138,20 @@ export class FinanceService {
             paidAt: now,
           },
         });
+
+        // Also ensure any pending unpaid subscription for this student and group is marked paid
+        await tx.monthlySubscription.updateMany({
+          where: {
+            tenantId,
+            studentId: student.id,
+            groupId: resolvedGroupId,
+            isPaid: false,
+          },
+          data: {
+            isPaid: true,
+            paidAt: now,
+          },
+        });
       }
 
       // تسجيل إجراء المساعد في سجل التدقيق (Audit Log)

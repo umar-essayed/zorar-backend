@@ -64,6 +64,16 @@ export class TenantService {
     return tenant;
   }
 
+  private resolvePlatformUrl(tenant: { subdomain?: string | null; customDomain?: string | null }): string {
+    if (tenant.customDomain && tenant.customDomain.trim().length > 0) {
+      const cd = tenant.customDomain.trim();
+      return cd.startsWith('http://') || cd.startsWith('https://') ? cd : `https://${cd}`;
+    }
+    const baseDomain = process.env.BASE_DOMAIN || 'eduzorar.com';
+    const sub = tenant.subdomain && tenant.subdomain.trim().length > 0 ? tenant.subdomain.trim() : 'portal';
+    return `https://${sub}.${baseDomain}`;
+  }
+
   async getTenantBySubdomain(subdomain: string) {
     const tenant = await this.prisma.tenant.findUnique({
       where: { subdomain: subdomain.toLowerCase() },
@@ -82,7 +92,10 @@ export class TenantService {
     if (!tenant) {
       throw new NotFoundException('المؤسسة غير موجودة');
     }
-    return tenant;
+    return {
+      ...tenant,
+      platformUrl: this.resolvePlatformUrl(tenant),
+    };
   }
 
   async getTenantById(tenantId: string) {
@@ -95,7 +108,10 @@ export class TenantService {
     if (!tenant) {
       throw new NotFoundException('المؤسسة غير موجودة');
     }
-    return tenant;
+    return {
+      ...tenant,
+      platformUrl: this.resolvePlatformUrl(tenant),
+    };
   }
 
   async updateBranding(tenantId: string, dto: UpdateBrandingDto) {

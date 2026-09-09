@@ -63,9 +63,10 @@ export class TeachersController {
   @Get('portal/stats')
   getTeacherPortalStats(
     @CurrentTenant() tenantId: string,
-    @CurrentUser('id') userId: string,
+    @CurrentUser() user: any,
   ) {
-    return this.teachersService.getTeacherDashboardStats(tenantId, userId);
+    const teacherIdOrUserId = user?.teacherId || user?.id;
+    return this.teachersService.getTeacherDashboardStats(tenantId, teacherIdOrUserId);
   }
 }
 

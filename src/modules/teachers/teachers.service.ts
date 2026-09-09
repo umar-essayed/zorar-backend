@@ -223,8 +223,19 @@ export class TeachersService {
     const start = new Date(dto.periodStart);
     const end = new Date(dto.periodEnd);
 
-    // جلب كل حضور طلاب مجموعات هذا المدرس خلال الفترة
+    // جلب الحركات المالية المكتملة لمجموعات هذا المدرس أو المدرس خلال الفترة
     const groupIds = teacher.groups.map((g) => g.id);
+    const transactions = await this.prisma.transaction.findMany({
+      where: {
+        tenantId,
+        OR: [
+          { teacherId: teacher.id },
+          { groupId: { in: groupIds } },
+        ],
+        createdAt: { gte: start, lte: end },
+      },
+    });
+
     const attendances = await this.prisma.attendance.findMany({
       where: {
         tenantId,
@@ -239,18 +250,35 @@ export class TeachersService {
     let centerShare = 0;
     let teacherShare = 0;
 
-    for (const att of attendances) {
-      const sessionPrice = Number(att.group.pricePerSession);
-      totalRevenue += sessionPrice;
+    if (transactions.length > 0) {
+      for (const tx of transactions) {
+        const amount = Number(tx.amount || 0);
+        totalRevenue += amount;
 
-      if (teacher.commissionType === 'PERCENTAGE') {
-        const centerFee = (sessionPrice * Number(teacher.centerPercentage)) / 100;
-        centerShare += centerFee;
-        teacherShare += sessionPrice - centerFee;
-      } else {
-        const fixedFee = Number(teacher.fixedCenterFee);
-        centerShare += fixedFee;
-        teacherShare += Math.max(0, sessionPrice - fixedFee);
+        if (teacher.commissionType === 'PERCENTAGE') {
+          const centerFee = (amount * Number(teacher.centerPercentage)) / 100;
+          centerShare += centerFee;
+          teacherShare += amount - centerFee;
+        } else {
+          const fixedFee = Number(teacher.fixedCenterFee);
+          centerShare += fixedFee;
+          teacherShare += Math.max(0, amount - fixedFee);
+        }
+      }
+    } else {
+      for (const att of attendances) {
+        const sessionPrice = Number(att.group.pricePerSession);
+        totalRevenue += sessionPrice;
+
+        if (teacher.commissionType === 'PERCENTAGE') {
+          const centerFee = (sessionPrice * Number(teacher.centerPercentage)) / 100;
+          centerShare += centerFee;
+          teacherShare += sessionPrice - centerFee;
+        } else {
+          const fixedFee = Number(teacher.fixedCenterFee);
+          centerShare += fixedFee;
+          teacherShare += Math.max(0, sessionPrice - fixedFee);
+        }
       }
     }
 

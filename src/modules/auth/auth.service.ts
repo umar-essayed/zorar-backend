@@ -76,6 +76,7 @@ export class AuthService {
         phone: user.phone,
         role: user.role,
         tenantId: user.tenantId,
+        teacherId: user.teacherProfile?.id,
         permissions: user.permissions,
         tenant: user.tenant,
         teacherProfile: user.teacherProfile,
