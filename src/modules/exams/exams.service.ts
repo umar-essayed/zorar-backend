@@ -108,9 +108,10 @@ export class ExamsService {
 
     let calculatedScore = 0;
     const reviewDetails: Record<string, any> = {};
+    const safeAnswers = dto?.answers || {};
 
     for (const question of exam.questions) {
-      const studentAnswer = dto.answers[question.id];
+      const studentAnswer = safeAnswers[question.id] || '';
       const isCorrect = studentAnswer === question.correctOption;
 
       if (isCorrect) {
@@ -133,7 +134,7 @@ export class ExamsService {
         studentId,
         score: calculatedScore,
         total: exam.totalScore,
-        answers: dto.answers,
+        answers: safeAnswers,
       },
     });
 

@@ -126,6 +126,7 @@ export class CreateExamDto {
 }
 
 export class SubmitExamDto {
-  @IsNotEmpty()
-  answers: Record<string, string>; // { questionId: selectedOption }
+  @IsOptional()
+  answers?: Record<string, string>; // { questionId: selectedOption }
 }
+

@@ -194,6 +194,8 @@ export class CoursesService {
                 durationSeconds: true,
                 isFreePreview: true,
                 orderIndex: true,
+                pdfAttachmentUrl: true,
+                homeworkDetails: true,
               },
             },
           },
@@ -222,17 +224,36 @@ export class CoursesService {
 
     // إذا لم يكن الدرس متاحاً للمعاينة المجانية، نتحقق من فتح الكورس للطالب
     if (!lesson.isFreePreview) {
-      const enrollment = await this.prisma.studentCourseEnrollment.findUnique({
-        where: {
-          studentId_courseId: {
-            studentId,
-            courseId: lesson.chapter.courseId,
-          },
-        },
-      });
+      const course = lesson.chapter.course;
+      const isCourseFree = !course.price || Number(course.price) === 0;
 
-      if (!enrollment) {
-        throw new ForbiddenException('هذا الدرس غير متاح لك. يرجى الاشتراك في الكورس أو سداد حصة السنتر لفتحه.');
+      if (!isCourseFree) {
+        const enrollment = await this.prisma.studentCourseEnrollment.findUnique({
+          where: {
+            studentId_courseId: {
+              studentId,
+              courseId: lesson.chapter.courseId,
+            },
+          },
+        });
+
+        // فحص هل الطالب مسجل في مجموعة تابعة لنفس المادة أو نفس المرحلة الدراسية بالسنتر
+        const hasGroupEnrollment = await this.prisma.studentGroup.findFirst({
+          where: {
+            studentId,
+            group: {
+              tenantId,
+              OR: [
+                { subjectId: course.subjectId },
+                { academicYearId: course.academicYearId },
+              ],
+            },
+          },
+        });
+
+        if (!enrollment && !hasGroupEnrollment) {
+          throw new ForbiddenException('هذا الدرس غير متاح لك. يرجى الاشتراك في الكورس أو سداد حصة السنتر لفتحه.');
+        }
       }
     }
 
