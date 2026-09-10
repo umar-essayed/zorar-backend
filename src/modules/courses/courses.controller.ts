@@ -109,6 +109,7 @@ export class CoursesController {
 
   // نقطة جلب توكن الفيديو المشفر والعلامة المائية للطالب
   @Get('lessons/:lessonId/secure-play')
+  @Get('lessons/:lessonId/player-token')
   getSecurePlayback(
     @CurrentUser('id') studentId: string,
     @CurrentTenant() tenantId: string,
@@ -118,6 +119,7 @@ export class CoursesController {
   }
 
   @Post('lessons/:lessonId/watch-progress')
+  @Post('lessons/:lessonId/progress')
   logProgress(
     @CurrentUser('id') studentId: string,
     @Param('lessonId') lessonId: string,
