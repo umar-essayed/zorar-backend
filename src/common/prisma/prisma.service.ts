@@ -8,22 +8,25 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
 
   constructor() {
     const dbUrl = process.env.DATABASE_URL?.trim();
-    if (!dbUrl) {
-      throw new Error(
-        'CRITICAL: DATABASE_URL environment variable is missing. Please set DATABASE_URL in your environment or .env file.',
-      );
-    }
-
 
     super({
-      datasources: {
-        db: {
-          url: dbUrl,
-        },
-      },
+      datasources: dbUrl
+        ? {
+            db: {
+              url: dbUrl,
+            },
+          }
+        : undefined,
       log: process.env.NODE_ENV === 'development' ? ['warn', 'error'] : ['error'],
     });
+
+    if (!dbUrl) {
+      this.logger.error(
+        'CRITICAL: DATABASE_URL environment variable is missing. Please configure DATABASE_URL in Vercel or your .env file.',
+      );
+    }
   }
+
 
   async onModuleInit() {
     try {
