@@ -267,12 +267,63 @@ export class CoursesService {
       .update(`${student.id}:${lesson.id}:${expiresAt}`)
       .digest('hex');
 
+    // جلب سجل المشاهدة السابق للطالب لهذه الحصة
+    const previousWatchLog = await this.prisma.videoWatchLog.findUnique({
+      where: {
+        studentId_lessonId: { studentId, lessonId },
+      },
+    });
+
+    // جلب الحصص الأخرى في نفس الفصل الدراسي
+    const chapterLessons = await this.prisma.lesson.findMany({
+      where: { chapterId: lesson.chapterId },
+      orderBy: { orderIndex: 'asc' },
+      select: {
+        id: true,
+        title: true,
+        durationSeconds: true,
+        orderIndex: true,
+        isFreePreview: true,
+        pdfAttachmentUrl: true,
+      },
+    });
+
+    const chapterLessonIds = chapterLessons.map((l) => l.id);
+    const relatedLogs = await this.prisma.videoWatchLog.findMany({
+      where: {
+        studentId,
+        lessonId: { in: chapterLessonIds },
+      },
+    });
+    const logMap = new Map(relatedLogs.map((log) => [log.lessonId, log]));
+
+    const enrichedChapterLessons = chapterLessons.map((l) => {
+      const log = logMap.get(l.id);
+      return {
+        ...l,
+        watchedSeconds: log?.watchedSeconds || 0,
+        isCompleted: log?.isCompleted || false,
+        isCurrent: l.id === lesson.id,
+      };
+    });
+
     return {
       playbackToken: signature,
       expiresAt,
       rawVideoId, // يُمرر فقط لمشغل التطبيق المحمي
       lessonTitle: lesson.title,
+      durationSeconds: lesson.durationSeconds,
       pdfAttachmentUrl: lesson.pdfAttachmentUrl,
+      completionThreshold: 40, // نسبة المشاهدة الافتراضية لاعتماد الحصة (40%)
+      previousWatchLog: previousWatchLog
+        ? {
+            watchedSeconds: previousWatchLog.watchedSeconds,
+            isCompleted: previousWatchLog.isCompleted,
+            lastWatchedAt: previousWatchLog.lastWatchedAt,
+          }
+        : null,
+      chapterLessons: enrichedChapterLessons,
+      nextLessons: enrichedChapterLessons.filter((l) => l.id !== lesson.id),
       // بيانات العلامة المائية العائمة المتحركة التي يقفز بها المشغل كل 5 ثوانٍ:
       watermarkConfig: {
         studentCode: student.studentCode,
@@ -285,20 +336,41 @@ export class CoursesService {
   }
 
   async logWatchProgress(studentId: string, lessonId: string, watchedSeconds: number, isCompleted: boolean) {
+    const lesson = await this.prisma.lesson.findUnique({
+      where: { id: lessonId },
+      select: { durationSeconds: true },
+    });
+
+    let completed = isCompleted;
+    const defaultThreshold = 40; // نسبة 40% الافتراضية
+    if (!completed && lesson && lesson.durationSeconds > 0) {
+      const percent = (watchedSeconds / lesson.durationSeconds) * 100;
+      if (percent >= defaultThreshold) {
+        completed = true;
+      }
+    }
+
+    const existing = await this.prisma.videoWatchLog.findUnique({
+      where: { studentId_lessonId: { studentId, lessonId } },
+    });
+
+    const maxSeconds = Math.max(existing?.watchedSeconds || 0, watchedSeconds);
+    const finalCompleted = completed || (existing?.isCompleted ?? false);
+
     return this.prisma.videoWatchLog.upsert({
       where: {
         studentId_lessonId: { studentId, lessonId },
       },
       update: {
-        watchedSeconds,
-        isCompleted,
+        watchedSeconds: maxSeconds,
+        isCompleted: finalCompleted,
         lastWatchedAt: new Date(),
       },
       create: {
         studentId,
         lessonId,
         watchedSeconds,
-        isCompleted,
+        isCompleted: finalCompleted,
       },
     });
   }

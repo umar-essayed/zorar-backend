@@ -72,7 +72,7 @@ export class ExamsService {
     return exam;
   }
 
-  async getExamForStudent(tenantId: string, examId: string) {
+  async getExamForStudent(tenantId: string, examId: string, studentId?: string) {
     const exam = await this.prisma.exam.findFirst({
       where: { id: examId, tenantId, isPublished: true },
       include: {
@@ -98,12 +98,45 @@ export class ExamsService {
       throw new BadRequestException(`انتهت فترة إتاحة هذا الامتحان في: ${new Date(exam.availableUntil).toLocaleString('ar-EG')}`);
     }
 
+    // التحقق المسبق من محاولات الطالب
+    let previousSubmissions: any[] = [];
+    let submissionsCount = 0;
+    let isExhausted = false;
+
+    if (studentId) {
+      previousSubmissions = await this.prisma.examSubmission.findMany({
+        where: { examId, studentId },
+        orderBy: { submittedAt: 'desc' },
+        select: {
+          id: true,
+          score: true,
+          total: true,
+          submittedAt: true,
+        },
+      });
+      submissionsCount = previousSubmissions.length;
+      if (submissionsCount >= (exam.maxAttempts || 1)) {
+        isExhausted = true;
+      }
+    }
+
+    const remainingAttempts = Math.max(0, (exam.maxAttempts || 1) - submissionsCount);
+    const lastSub = previousSubmissions[0] || null;
+    const isPassed = lastSub ? lastSub.score >= (exam.passingScore || 50) : false;
+
     // راندومة الأسئلة إذا كانت الميزة مفعلة
-    if (exam.shuffleQuestions) {
+    if (exam.shuffleQuestions && !isExhausted) {
       exam.questions = exam.questions.sort(() => Math.random() - 0.5);
     }
 
-    return exam;
+    return {
+      ...exam,
+      submissionsCount,
+      remainingAttempts,
+      isExhausted,
+      previousSubmissions,
+      lastSubmission: previousSubmissions[0] || null,
+    };
   }
 
   async submitExam(studentId: string, examId: string, dto: SubmitExamDto) {

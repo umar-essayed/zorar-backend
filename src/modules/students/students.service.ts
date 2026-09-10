@@ -383,10 +383,22 @@ export class StudentsService {
         },
         videoWatchLogs: {
           include: {
-            lesson: { select: { title: true } },
+            lesson: {
+              select: {
+                id: true,
+                title: true,
+                durationSeconds: true,
+                chapter: {
+                  select: {
+                    title: true,
+                    course: { select: { title: true } },
+                  },
+                },
+              },
+            },
           },
           orderBy: { lastWatchedAt: 'desc' },
-          take: 10,
+          take: 20,
         },
         courseAccess: {
           include: {
@@ -395,10 +407,10 @@ export class StudentsService {
         },
         examSubmissions: {
           include: {
-            exam: { select: { title: true, totalScore: true } },
+            exam: { select: { id: true, title: true, totalScore: true, passingScore: true } },
           },
           orderBy: { submittedAt: 'desc' },
-          take: 10,
+          take: 20,
         },
       },
     });
@@ -435,6 +447,8 @@ export class StudentsService {
       });
     }
 
+    const effectiveRank = centerYearRank > 0 ? centerYearRank : 1;
+
     return {
       ...student,
       platformStatus: {
@@ -445,10 +459,11 @@ export class StudentsService {
         examSubmissionsCount: student.examSubmissions?.length || 0,
       },
       rankSummary: {
-        centerYearRank,
+        rank: effectiveRank,
+        centerYearRank: effectiveRank,
         totalStudentsInYear: totalStudentsInYear || 1,
         points: student.points || 0,
-        rankLabel: `المركز ${centerYearRank} على الدفعة 🏆`,
+        rankLabel: `المركز ${effectiveRank} على الدفعة 🏆`,
       },
       financialSummary: {
         totalPaid,

@@ -40,8 +40,12 @@ export class ExamsController {
   }
 
   @Get(':id/take')
-  getExamForStudent(@CurrentTenant() tenantId: string, @Param('id') id: string) {
-    return this.examsService.getExamForStudent(tenantId, id);
+  getExamForStudent(
+    @CurrentTenant() tenantId: string,
+    @CurrentUser('id') studentId: string,
+    @Param('id') id: string,
+  ) {
+    return this.examsService.getExamForStudent(tenantId, id, studentId);
   }
 
   @Post(':id/submit')
