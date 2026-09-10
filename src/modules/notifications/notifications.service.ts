@@ -94,9 +94,11 @@ export class NotificationsService {
     });
 
     // إرسال الإشعار اللحظي إلى هواتف الطلاب عبر Firebase Cloud Messaging
-    this.dispatchPushNotification(tenantId, notification).catch((err) => {
-      this.logger.warn(`Background FCM dispatch error: ${err.message}`);
-    });
+    try {
+      await this.dispatchPushNotification(tenantId, notification);
+    } catch (err: any) {
+      this.logger.warn(`Push dispatch error: ${err?.message}`);
+    }
 
     return notification;
   }
@@ -121,6 +123,15 @@ export class NotificationsService {
       const messaging = getMessaging(this.firebaseApp);
       const cleanTenant = tenantId.replace(/[^a-zA-Z0-9_-]/g, '_');
 
+      const androidPayload: any = {
+        priority: 'high',
+        notification: {
+          sound: 'default',
+          defaultSound: true,
+          defaultVibrateTimings: true,
+        },
+      };
+
       // 1. إذا كان الإشعار لجميع طلاب السنتر
       if (notification.target === 'ALL_STUDENTS') {
         const topic = `tenant_${cleanTenant}`;
@@ -134,33 +145,32 @@ export class NotificationsService {
             notificationId: notification.id,
             tenantId,
           },
-          android: {
-            priority: 'high',
-            notification: {
-              sound: 'default',
-              channelId: 'eduzorar_alerts',
-            },
-          },
+          android: androidPayload,
         }).catch((err) => this.logger.warn(`Failed sending to topic ${topic}: ${err.message}`));
 
         // إرسال مباشر أيضاً لرموز أجهزة الطلاب المسجلة في السنتر
-        const students = await this.prisma.student.findMany({
-          where: { tenantId, fcmToken: { not: null } },
-          select: { fcmToken: true },
-        });
-        const tokens = students.map((s) => s.fcmToken as string).filter(Boolean);
-        if (tokens.length > 0) {
-          await messaging.sendEachForMulticast({
-            tokens,
-            notification: {
-              title: notification.title,
-              body: notification.body,
-            },
-            data: {
-              notificationId: notification.id,
-              tenantId,
-            },
-          }).catch((err) => this.logger.warn(`Failed multicast to students: ${err.message}`));
+        try {
+          const students = await this.prisma.student.findMany({
+            where: { tenantId, fcmToken: { not: null } },
+            select: { fcmToken: true },
+          });
+          const tokens = students.map((s) => s.fcmToken as string).filter(Boolean);
+          if (tokens.length > 0) {
+            await messaging.sendEachForMulticast({
+              tokens,
+              notification: {
+                title: notification.title,
+                body: notification.body,
+              },
+              data: {
+                notificationId: notification.id,
+                tenantId,
+              },
+              android: androidPayload,
+            }).catch((err) => this.logger.warn(`Failed multicast to students: ${err.message}`));
+          }
+        } catch (dbErr: any) {
+          this.logger.warn(`Could not query student tokens for direct send: ${dbErr.message}`);
         }
       } else if (notification.target === 'GROUP_SPECIFIC' && notification.groupId) {
         // 2. إشعار لمجموعة معينة
@@ -177,58 +187,55 @@ export class NotificationsService {
             tenantId,
             groupId: notification.groupId,
           },
-          android: {
-            priority: 'high',
-            notification: {
-              sound: 'default',
-              channelId: 'eduzorar_alerts',
-            },
-          },
+          android: androidPayload,
         }).catch((err) => this.logger.warn(`Failed sending to topic ${topic}: ${err.message}`));
 
-        const groupStudents = await this.prisma.studentGroup.findMany({
-          where: { groupId: notification.groupId, student: { fcmToken: { not: null } } },
-          include: { student: { select: { fcmToken: true } } },
-        });
-        const tokens = groupStudents.map((gs) => gs.student.fcmToken as string).filter(Boolean);
-        if (tokens.length > 0) {
-          await messaging.sendEachForMulticast({
-            tokens,
-            notification: {
-              title: notification.title,
-              body: notification.body,
-            },
-            data: {
-              notificationId: notification.id,
-              tenantId,
-            },
-          }).catch((err) => this.logger.warn(`Failed multicast to group: ${err.message}`));
+        try {
+          const groupStudents = await this.prisma.studentGroup.findMany({
+            where: { groupId: notification.groupId, student: { fcmToken: { not: null } } },
+            include: { student: { select: { fcmToken: true } } },
+          });
+          const tokens = groupStudents.map((gs) => gs.student.fcmToken as string).filter(Boolean);
+          if (tokens.length > 0) {
+            await messaging.sendEachForMulticast({
+              tokens,
+              notification: {
+                title: notification.title,
+                body: notification.body,
+              },
+              data: {
+                notificationId: notification.id,
+                tenantId,
+              },
+              android: androidPayload,
+            }).catch((err) => this.logger.warn(`Failed multicast to group: ${err.message}`));
+          }
+        } catch (dbErr: any) {
+          this.logger.warn(`Could not query group student tokens: ${dbErr.message}`);
         }
       } else if (notification.studentId) {
         // 3. إشعار فردي لطالب محدد
-        const student = await this.prisma.student.findUnique({
-          where: { id: notification.studentId },
-          select: { fcmToken: true },
-        });
-        if (student?.fcmToken) {
-          await messaging.send({
-            token: student.fcmToken,
-            notification: {
-              title: notification.title,
-              body: notification.body,
-            },
-            data: {
-              notificationId: notification.id,
-              tenantId,
-            },
-            android: {
-              priority: 'high',
+        try {
+          const student = await this.prisma.student.findUnique({
+            where: { id: notification.studentId },
+            select: { fcmToken: true },
+          });
+          if (student?.fcmToken) {
+            await messaging.send({
+              token: student.fcmToken,
               notification: {
-                sound: 'default',
-                channelId: 'eduzorar_alerts',
+                title: notification.title,
+                body: notification.body,
               },
-            },
-          }).catch((err) => this.logger.warn(`Failed sending to student token: ${err.message}`));
+              data: {
+                notificationId: notification.id,
+                tenantId,
+              },
+              android: androidPayload,
+            }).catch((err) => this.logger.warn(`Failed sending to student token: ${err.message}`));
+          }
+        } catch (dbErr: any) {
+          this.logger.warn(`Could not query single student token: ${dbErr.message}`);
         }
       }
     } catch (err: any) {
