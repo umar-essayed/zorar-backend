@@ -37,3 +37,5 @@ lerna-debug.log*
 /coverage
 tsconfig.tsbuildinfo
 .env*
+*firebase-adminsdk*.json
+service-account.json
