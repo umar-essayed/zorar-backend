@@ -26,6 +26,15 @@ export class NotificationsController {
     return this.notificationsService.getStudentNotifications(tenantId, studentId);
   }
 
+  @Post('fcm-token')
+  registerFcmToken(
+    @CurrentTenant() tenantId: string,
+    @CurrentUser('id') studentId: string,
+    @Body('token') token: string,
+  ) {
+    return this.notificationsService.registerFcmToken(tenantId, studentId, token);
+  }
+
   @Post(':id/read')
   markAsRead(
     @CurrentTenant() tenantId: string,

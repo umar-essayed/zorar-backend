@@ -343,6 +343,7 @@ model Student {
   walletBalance       Decimal @default(0.0) @db.Decimal(10, 2)
   consecutiveAbsences Int     @default(0) // عدد الغيابات المتتالية لرصد الإنذارات
   notes               String?
+  fcmToken            String? // رمز جهاز الطالب لاستقبال إشعارات البوش السحابية (FCM)
 
   isActive  Boolean  @default(true)
   createdAt DateTime @default(now())
