@@ -413,6 +413,28 @@ export class StudentsService {
 
     const totalPaid = student.transactions.reduce((acc: number, t: any) => acc + Number(t.amount || 0), 0);
 
+    // ترتيب الطالب على مستوى السنة الدراسية في السنتر
+    let centerYearRank = 1;
+    let totalStudentsInYear = 1;
+    if (student.academicYearId) {
+      const higherPointsCount = await this.prisma.student.count({
+        where: {
+          tenantId,
+          academicYearId: student.academicYearId,
+          isActive: true,
+          points: { gt: student.points },
+        },
+      });
+      centerYearRank = higherPointsCount + 1;
+      totalStudentsInYear = await this.prisma.student.count({
+        where: {
+          tenantId,
+          academicYearId: student.academicYearId,
+          isActive: true,
+        },
+      });
+    }
+
     return {
       ...student,
       platformStatus: {
@@ -421,6 +443,12 @@ export class StudentsService {
         watchLogsCount: student.videoWatchLogs?.length || 0,
         courseAccessCount: student.courseAccess?.length || 0,
         examSubmissionsCount: student.examSubmissions?.length || 0,
+      },
+      rankSummary: {
+        centerYearRank,
+        totalStudentsInYear: totalStudentsInYear || 1,
+        points: student.points || 0,
+        rankLabel: `المركز ${centerYearRank} على الدفعة 🏆`,
       },
       financialSummary: {
         totalPaid,
@@ -676,6 +704,142 @@ export class StudentsService {
         message: 'تم تسجيل السداد بنجاح وإصدار الإيصال',
       };
     });
+  }
+
+  async getGroupAnalytics(tenantId: string, studentId: string, groupId: string) {
+    const group = await this.prisma.group.findFirst({
+      where: { id: groupId, tenantId },
+      include: {
+        subject: true,
+        teacher: true,
+        students: {
+          include: {
+            student: {
+              select: { id: true, name: true, studentCode: true, points: true },
+            },
+          },
+        },
+      },
+    });
+
+    if (!group) throw new NotFoundException('المجموعة غير موجودة');
+
+    // ترتيب الطلاب في المجموعة حسب النقاط
+    const sortedStudents = group.students
+      .map((sg) => sg.student)
+      .filter(Boolean)
+      .sort((a, b) => (b.points || 0) - (a.points || 0));
+
+    const studentIndex = sortedStudents.findIndex((s) => s.id === studentId);
+    const myRank = studentIndex >= 0 ? studentIndex + 1 : 1;
+    const totalStudents = sortedStudents.length;
+
+    // جلب كويزات وتقييمات الطالب في هذه المجموعة
+    const assessments = await this.prisma.sessionAssessment.findMany({
+      where: {
+        studentId,
+        attendance: { groupId },
+      },
+      include: {
+        attendance: {
+          include: {
+            session: true,
+          },
+        },
+      },
+      orderBy: { createdAt: 'asc' },
+    });
+
+    // جلب امتحانات هذه المجموعة التي قدمها الطالب
+    const exams = await this.prisma.examSubmission.findMany({
+      where: {
+        studentId,
+        exam: {
+          OR: [
+            { groupId },
+            { groupIds: { array_contains: groupId } },
+          ],
+        },
+      },
+      include: { exam: { select: { title: true, totalScore: true } } },
+      orderBy: { submittedAt: 'asc' },
+    });
+
+    // بناء تسلسل التقدم الأسبوعي
+    const weeklyProgress: any[] = [];
+    let weekCounter = 1;
+
+    for (const a of assessments) {
+      const score = Number(a.quizScore || 0);
+      const maxScore = Number(a.quizTotal || 10);
+      const percentage = maxScore > 0 ? Math.round((score / maxScore) * 100) : 0;
+      weeklyProgress.push({
+        weekNumber: weekCounter++,
+        weekLabel: `حصة ${a.attendance?.session?.sessionNumber || weekCounter - 1}`,
+        date: a.createdAt,
+        type: 'كويز حصة',
+        title: a.attendance?.session?.title || 'كويز دوري',
+        score,
+        maxScore,
+        percentage,
+      });
+    }
+
+    for (const e of exams) {
+      const score = Number(e.score || 0);
+      const maxScore = Number(e.total || 100);
+      const percentage = maxScore > 0 ? Math.round((score / maxScore) * 100) : 0;
+      weeklyProgress.push({
+        weekNumber: weekCounter++,
+        weekLabel: `امتحان ${weekCounter - 1}`,
+        date: e.submittedAt,
+        type: 'امتحان إلكتروني',
+        title: e.exam.title,
+        score,
+        maxScore,
+        percentage,
+      });
+    }
+
+    // حساب متوسط الكويزات
+    const avgScore =
+      weeklyProgress.length > 0
+        ? Math.round(weeklyProgress.reduce((sum, item) => sum + item.percentage, 0) / weeklyProgress.length)
+        : 100;
+
+    // نسبة الحضور
+    const totalGroupAttendances = await this.prisma.attendance.count({
+      where: { studentId, groupId },
+    });
+    const totalGroupAbsences = await this.prisma.attendance.count({
+      where: { studentId, groupId, status: 'ABSENT' },
+    });
+    const attendanceRate = totalGroupAttendances > 0
+      ? Math.round(((totalGroupAttendances - totalGroupAbsences) / totalGroupAttendances) * 100)
+      : 100;
+
+    // قائمة لوحة الشرف
+    const topLeaderboard = sortedStudents.slice(0, 10).map((s, idx) => ({
+      rank: idx + 1,
+      studentId: s.id,
+      name: s.name,
+      studentCode: s.studentCode,
+      points: s.points || 0,
+      isMe: s.id === studentId,
+    }));
+
+    return {
+      groupId: group.id,
+      groupName: group.name,
+      subjectName: group.subject?.name || '',
+      teacherName: group.teacher?.name || '',
+      myRank,
+      totalStudents,
+      avgScore,
+      attendanceRate,
+      weeklyProgress,
+      topLeaderboard,
+    };
   }
 }
 

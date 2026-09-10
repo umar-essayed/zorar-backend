@@ -92,5 +92,14 @@ export class StudentsController {
   getCardQR(@CurrentTenant() tenantId: string, @Param('id') id: string) {
     return this.studentsService.getStudentCardQRBase64(tenantId, id);
   }
+
+  @Get(':id/groups/:groupId/analytics')
+  getGroupAnalytics(
+    @CurrentTenant() tenantId: string,
+    @Param('id') id: string,
+    @Param('groupId') groupId: string,
+  ) {
+    return this.studentsService.getGroupAnalytics(tenantId, id, groupId);
+  }
 }
 

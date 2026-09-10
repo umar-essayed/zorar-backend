@@ -14,7 +14,7 @@ export class ExamsService {
     const durationMinutes = dto.durationMinutes ?? dto.duration ?? 30;
     const passingScore = dto.passingScore ?? dto.passingMarks ?? Math.floor(totalScore * 0.5);
 
-    return this.prisma.exam.create({
+    const exam = await this.prisma.exam.create({
       data: {
         tenantId,
         courseId: dto.courseId || null,
@@ -48,6 +48,28 @@ export class ExamsService {
         questions: true,
       },
     });
+
+    // إرسال إشعار فوري لطلاب المجموعة عند نشر الامتحان
+    try {
+      if (exam.isPublished && (exam.groupId || (exam.groupIds && Array.isArray(exam.groupIds) && exam.groupIds.length > 0))) {
+        const targetGroupId = exam.groupId || (exam.groupIds as string[])[0];
+        await this.prisma.notification.create({
+          data: {
+            tenantId,
+            title: `امتحان جديد: ${exam.title}`,
+            body: `تم إتاحة امتحان جديد لمجموعتك (${exam.totalScore} درجة - ${exam.durationMinutes} دقيقة)`,
+            type: 'EXAM',
+            target: 'GROUP',
+            groupId: targetGroupId,
+            actionPayload: { screen: 'exam', examId: exam.id, examTitle: exam.title },
+          },
+        });
+      }
+    } catch (err) {
+      // إشعار غير حاجب للعملية
+    }
+
+    return exam;
   }
 
   async getExamForStudent(tenantId: string, examId: string) {
@@ -106,34 +128,48 @@ export class ExamsService {
       throw new BadRequestException(`لقد استنفدت الحد الأقصى للمحاولات المسموحة (${exam.maxAttempts || 1} محاولة)`);
     }
 
-    let calculatedScore = 0;
-    const reviewDetails: Record<string, any> = {};
+    // توزيع الدرجة بالتساوي وبدقة عادلة على جميع الأسئلة
+    const totalQuestionPoints = exam.questions.reduce((acc, q) => acc + (q.points || 1), 0);
+    const targetTotalScore = exam.totalScore || 100;
+
+    let rawEarnedPoints = 0;
+    const reviewDetailsList: any[] = [];
+    const reviewDetailsMap: Record<string, any> = {};
     const safeAnswers = dto?.answers || {};
 
     for (const question of exam.questions) {
       const studentAnswer = safeAnswers[question.id] || '';
       const isCorrect = studentAnswer === question.correctOption;
+      const questionWeight = question.points || 1;
 
       if (isCorrect) {
-        calculatedScore += question.points;
+        rawEarnedPoints += questionWeight;
       }
 
-      reviewDetails[question.id] = {
+      const itemReview = {
+        questionId: question.id,
         questionText: question.text,
         studentAnswer,
         correctAnswer: question.correctOption,
         isCorrect,
-        pointsAwarded: isCorrect ? question.points : 0,
+        pointsAwarded: isCorrect ? questionWeight : 0,
         explanation: question.explanation,
       };
+
+      reviewDetailsList.push(itemReview);
+      reviewDetailsMap[question.id] = itemReview;
     }
+
+    const calculatedScore = totalQuestionPoints > 0
+      ? Math.round((rawEarnedPoints / totalQuestionPoints) * targetTotalScore)
+      : 0;
 
     const submission = await this.prisma.examSubmission.create({
       data: {
         examId,
         studentId,
         score: calculatedScore,
-        total: exam.totalScore,
+        total: targetTotalScore,
         answers: safeAnswers,
       },
     });
@@ -150,14 +186,15 @@ export class ExamsService {
     return {
       submissionId: submission.id,
       score: calculatedScore,
-      total: exam.totalScore,
-      percentage: Math.round((calculatedScore / (exam.totalScore || 1)) * 100),
+      total: targetTotalScore,
+      percentage: Math.round((calculatedScore / (targetTotalScore || 1)) * 100),
       passed,
-      review: exam.showModelAnswers ? reviewDetails : null,
+      review: exam.showModelAnswers ? reviewDetailsList : null,
+      reviewMap: exam.showModelAnswers ? reviewDetailsMap : null,
     };
   }
 
-  async getExamsByTenant(tenantId: string, filter?: any) {
+  async getExamsByTenant(tenantId: string, filter?: any, studentId?: string) {
     const where: any = { tenantId };
     if (filter?.groupId) {
       where.OR = [
@@ -174,11 +211,38 @@ export class ExamsService {
       include: {
         _count: { select: { questions: true, submissions: true } },
         questions: { select: { id: true, points: true } },
+        submissions: studentId
+          ? {
+              where: { studentId },
+              select: { id: true, score: true, total: true, submittedAt: true },
+              orderBy: { submittedAt: 'desc' },
+            }
+          : false,
       },
       orderBy: { createdAt: 'desc' },
     });
 
-    return exams;
+    return exams.map((exam) => {
+      const subs = (exam as any).submissions || [];
+      const maxAttempts = exam.maxAttempts || 1;
+      const mySubmissionsCount = subs.length;
+      const remainingAttempts = Math.max(0, maxAttempts - mySubmissionsCount);
+      const isCompleted = mySubmissionsCount >= maxAttempts;
+      const lastSubmission = subs[0] || null;
+
+      return {
+        ...exam,
+        maxAttempts,
+        mySubmissionsCount,
+        remainingAttempts,
+        isCompleted,
+        lastScore: lastSubmission ? lastSubmission.score : null,
+        lastPercentage:
+          lastSubmission && exam.totalScore > 0
+            ? Math.round((lastSubmission.score / exam.totalScore) * 100)
+            : null,
+      };
+    });
   }
 
   async getExamById(tenantId: string, examId: string) {

@@ -18,6 +18,7 @@ import { StorefrontModule } from './modules/storefront/storefront.module';
 import { WhatsAppModule } from './modules/whatsapp/whatsapp.module';
 import { AdmissionModule } from './modules/admission/admission.module';
 import { UploadsModule } from './modules/uploads/uploads.module';
+import { NotificationsModule } from './modules/notifications/notifications.module';
 
 import { AppController } from './app.controller';
 
@@ -40,6 +41,7 @@ import { AppController } from './app.controller';
     WhatsAppModule,
     AdmissionModule,
     UploadsModule,
+    NotificationsModule,
   ],
   controllers: [AppController],
 })

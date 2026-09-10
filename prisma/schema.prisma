@@ -71,6 +71,7 @@ model Tenant {
   admissionForms     AdmissionForm[]
   whatsappQueue      WhatsAppMessage[]
   groupSessions      GroupSession[]
+  notifications      Notification[]
 
   @@index([subdomain])
   @@index([customDomain])
@@ -287,6 +288,7 @@ model Group {
   monthlySubs MonthlySubscription[]
   sessions    GroupSession[]
   transactions Transaction[]
+  notifications Notification[]
 
   @@index([tenantId, academicYearId])
 }
@@ -358,6 +360,8 @@ model Student {
   examSubmissions ExamSubmission[]
   videoWatchLogs  VideoWatchLog[]
   submissions     AssignmentSubmission[]
+  notifications   Notification[]
+  notificationReceipts NotificationReceipt[]
 
   @@unique([tenantId, studentCode])
   @@index([tenantId, phone])
@@ -1034,3 +1038,62 @@ model AdmissionSubmission {
 
   @@index([formId, status])
 }
+
+// =============================================================================
+// 14. مركز الإشعارات والتنبيهات السحابية والطارئة (Notification Ecosystem)
+// =============================================================================
+
+enum NotificationType {
+  GENERAL
+  EXAM
+  LESSON
+  SCHEDULE
+  URGENT
+  ANNOUNCEMENT
+}
+
+enum NotificationTarget {
+  ALL_STUDENTS
+  GROUP
+  SPECIFIC_STUDENT
+}
+
+model Notification {
+  id        String             @id @default(uuid())
+  tenantId  String
+  tenant    Tenant             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  title     String
+  body      String
+  type      NotificationType   @default(GENERAL)
+  target    NotificationTarget @default(ALL_STUDENTS)
+
+  groupId   String?
+  group     Group?             @relation(fields: [groupId], references: [id], onDelete: SetNull)
+  studentId String?
+  student   Student?           @relation(fields: [studentId], references: [id], onDelete: SetNull)
+
+  actionPayload Json?          // e.g. { "screen": "exam", "examId": "..." }
+  isUrgent      Boolean        @default(false)
+  createdAt     DateTime       @default(now())
+
+  receipts      NotificationReceipt[]
+
+  @@index([tenantId, createdAt])
+  @@index([groupId])
+  @@index([studentId])
+}
+
+model NotificationReceipt {
+  id             String       @id @default(uuid())
+  notificationId String
+  notification   Notification @relation(fields: [notificationId], references: [id], onDelete: Cascade)
+  studentId      String
+  student        Student      @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  readAt         DateTime?
+  createdAt      DateTime     @default(now())
+
+  @@unique([notificationId, studentId])
+  @@index([studentId])
+}
+

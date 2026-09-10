@@ -16,8 +16,12 @@ export class ExamsController {
   }
 
   @Get()
-  getExams(@CurrentTenant() tenantId: string, @Query() query: any) {
-    return this.examsService.getExamsByTenant(tenantId, query);
+  getExams(
+    @CurrentTenant() tenantId: string,
+    @CurrentUser('id') userId: string,
+    @Query() query: any,
+  ) {
+    return this.examsService.getExamsByTenant(tenantId, query, userId);
   }
 
   @Get(':id')
