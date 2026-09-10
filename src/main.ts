@@ -57,8 +57,21 @@ export async function createServer(): Promise<any> {
 
 // Vercel Serverless Function Default Export
 export default async function handler(req: any, res: any) {
-  const server = await createServer();
-  return server(req, res);
+  try {
+    const server = await createServer();
+    return server(req, res);
+  } catch (err: any) {
+    console.error('SERVERLESS HANDLER ERROR:', err);
+    res.statusCode = 500;
+    res.setHeader('Content-Type', 'application/json');
+    return res.end(
+      JSON.stringify({
+        statusCode: 500,
+        error: 'SERVERLESS_INITIALIZATION_ERROR',
+        message: err?.message || String(err),
+      }),
+    );
+  }
 }
 
 // Traditional server bootstrap for local development / Docker
